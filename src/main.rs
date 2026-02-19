@@ -76,15 +76,22 @@ async fn run_interaction_loop(config: config::Config) -> Result<()> {
         info!("Sending prompt to Gemini: {}", prompt);
         
         // Use a match to handle potential API errors gracefully without crashing the daemon
-        match client.generate_content(prompt).await {
+        // Use the new Interaction API
+        let request = gemini::InteractionInput::Text(prompt.to_string());
+        match client.interaction(request).send().await {
             Ok(response) => {
-                println!("\nchitti: {}\n", response);
+                if let Some(output) = response.outputs.first() {
+                    match output {
+                        gemini::InteractionOutput::Text { text } => println!("\nchitti: {}\n", text),
+                        _ => println!("\nchitti: [Received non-text output]\n"),
+                    }
+                }
             },
             Err(e) => {
                 error!("Error communicating with Gemini: {:?}", e);
                 println!("chitti: Sorry, I encountered an error. Please check the logs.");
             }
-        }
+    }
     }
 
     Ok(())
