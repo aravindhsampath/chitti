@@ -1,9 +1,8 @@
-use anyhow::{Context, Result};
 use reqwest::Method;
 use std::path::Path;
 use crate::gemini::client::Client;
 use crate::gemini::types::*;
-
+use crate::gemini::error::{GeminiError, Result};
 impl Client {
     /// Uploads a file to the Gemini File API.
     pub async fn upload_file<P: AsRef<Path>>(&self, path: P, display_name: Option<String>) -> Result<File> {
@@ -12,15 +11,12 @@ impl Client {
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
-
         let mime_type = mime_guess::from_path(path)
             .first_raw()
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let file_bytes = tokio::fs::read(path).await
-            .context("Failed to read file for upload")?;
-
+        let file_bytes = tokio::fs::read(path).await?;
         // 1. Initial metadata request
         let metadata = serde_json::json!({
             "file": {
@@ -38,21 +34,18 @@ impl Client {
             .header("Content-Type", "application/json")
             .json(&metadata)
             .send()
-            .await
-            .context("Failed to start resumable upload")?;
+            .await?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let err = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("File API upload start error ({}): {}", status, err));
+            let code = response.status().as_str().to_string();
+            let message = response.text().await.unwrap_or_default();
+            return Err(GeminiError::Api { code, message });
         }
-
         let upload_url = response.headers()
             .get("x-goog-upload-url")
             .and_then(|v| v.to_str().ok())
-            .context("Missing x-goog-upload-url header")?
+            .ok_or_else(|| GeminiError::Other("Missing x-goog-upload-url header".to_string()))?
             .to_string();
-
         // 2. Upload actual bytes
         let response = self.http_client
             .request(Method::POST, &upload_url)
@@ -62,22 +55,17 @@ impl Client {
             .header("X-Goog-Upload-Command", "upload, finalize")
             .body(file_bytes)
             .send()
-            .await
-            .context("Failed to finalize upload")?;
+            .await?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let err = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("File API upload finalize error ({}): {}", status, err));
+            let code = response.status().as_str().to_string();
+            let message = response.text().await.unwrap_or_default();
+            return Err(GeminiError::Api { code, message });
         }
-
         let result: serde_json::Value = response.json().await?;
-        let file: File = serde_json::from_value(result["file"].clone())
-            .context("Failed to parse file metadata from response")?;
-
+        let file: File = serde_json::from_value(result["file"].clone())?;
         Ok(file)
     }
-
     /// Gets metadata for a file.
     pub async fn get_file(&self, name: &str) -> Result<File> {
         let path = if name.starts_with("files/") {
@@ -85,19 +73,18 @@ impl Client {
         } else {
             format!("/v1beta/files/{}", name)
         };
-
         let response = self.request(Method::GET, &path)
             .send()
-            .await
-            .context("Failed to get file metadata")?;
+            .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("File API get error: {}", response.status()));
+            let code = response.status().as_str().to_string();
+            let message = response.text().await.unwrap_or_default();
+            return Err(GeminiError::Api { code, message });
         }
 
         Ok(response.json().await?)
     }
-
     /// Lists files owned by the project.
     pub async fn list_files(&self, page_size: Option<u32>, page_token: Option<String>) -> Result<ListFilesResponse> {
         let mut query = vec![];
@@ -107,20 +94,19 @@ impl Client {
         if let Some(pt) = page_token {
             query.push(("pageToken", pt));
         }
-
         let response = self.request(Method::GET, "/v1beta/files")
             .query(&query)
             .send()
-            .await
-            .context("Failed to list files")?;
+            .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("File API list error: {}", response.status()));
+            let code = response.status().as_str().to_string();
+            let message = response.text().await.unwrap_or_default();
+            return Err(GeminiError::Api { code, message });
         }
 
         Ok(response.json().await?)
     }
-
     /// Deletes a file.
     pub async fn delete_file(&self, name: &str) -> Result<()> {
         let path = if name.starts_with("files/") {
@@ -128,16 +114,15 @@ impl Client {
         } else {
             format!("/v1beta/files/{}", name)
         };
-
         let response = self.request(Method::DELETE, &path)
             .send()
-            .await
-            .context("Failed to delete file")?;
+            .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("File API delete error: {}", response.status()));
+            let code = response.status().as_str().to_string();
+            let message = response.text().await.unwrap_or_default();
+            return Err(GeminiError::Api { code, message });
         }
-
         Ok(())
     }
 }
