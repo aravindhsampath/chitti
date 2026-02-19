@@ -4,7 +4,6 @@ use std::env;
 use tracing::{info, warn, error, Level};
 use tracing_subscriber::FmtSubscriber;
 
-mod error;
 mod config;
 mod gemini;
 

@@ -1,6 +1,6 @@
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};
-use tracing::{info, debug, error};
+use tracing::{debug, error};
 use anyhow::{Result, anyhow};
 
 #[derive(Serialize)]
@@ -42,6 +42,7 @@ pub struct Client {
     http_client: HttpClient,
     api_key: String,
     model: String,
+    base_url: String,
 }
 
 impl Client {
@@ -50,13 +51,24 @@ impl Client {
             http_client: HttpClient::new(),
             api_key,
             model,
+            base_url: "https://generativelanguage.googleapis.com".to_string(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_base_url(api_key: String, model: String, base_url: String) -> Self {
+        Self {
+            http_client: HttpClient::new(),
+            api_key,
+            model,
+            base_url,
         }
     }
 
     pub async fn generate_content(&self, prompt: &str) -> Result<String> {
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.api_key
+            "{}/v1beta/models/{}:generateContent?key={}",
+            self.base_url, self.model, self.api_key
         );
 
         let request_body = GeminiRequest {
@@ -94,5 +106,72 @@ impl Client {
         }
 
         Err(anyhow!("Gemini API returned an empty or invalid response structure"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn test_generate_content_success() {
+        let mut server = Server::new_async().await;
+        // Mock the exact path structure used in Client::generate_content
+        // URL format: {base_url}/v1beta/models/{model}:generateContent?key={key}
+        let path = "/v1beta/models/test-model:generateContent";
+        
+        let mock = server.mock("POST", path)
+            .match_query(mockito::Matcher::Regex("key=test-key".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": "Hello from Gemini!"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }"#)
+            .create_async().await;
+
+        let client = Client::with_base_url(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            server.url(),
+        );
+
+        let response = client.generate_content("Hi").await.unwrap();
+        assert_eq!(response, "Hello from Gemini!");
+        
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_generate_content_api_error() {
+        let mut server = Server::new_async().await;
+        let path = "/v1beta/models/test-model:generateContent";
+        
+        let mock = server.mock("POST", path)
+            .match_query(mockito::Matcher::Regex("key=test-key".into()))
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .create_async().await;
+
+        let client = Client::with_base_url(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            server.url(),
+        );
+
+        let result = client.generate_content("Hi").await;
+        assert!(result.is_err());
+        
+        mock.assert_async().await;
     }
 }

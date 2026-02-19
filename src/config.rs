@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::env;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub gemini_api_key: String,
     pub gemini_model: String,
@@ -19,5 +19,40 @@ impl Config {
             gemini_api_key: api_key,
             gemini_model: model,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::env;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_from_env_success() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        
+        env::set_var("GEMINI_API_KEY", "test-key");
+        env::set_var("GEMINI_MODEL", "test-model");
+        
+        let config = Config::from_env().unwrap();
+        assert_eq!(config.gemini_api_key, "test-key");
+        assert_eq!(config.gemini_model, "test-model");
+        
+        env::remove_var("GEMINI_API_KEY");
+        env::remove_var("GEMINI_MODEL");
+    }
+
+    #[test]
+    fn test_from_env_missing_key() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        
+        env::remove_var("GEMINI_API_KEY");
+        
+        let result = Config::from_env();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("GEMINI_API_KEY must be set"));
     }
 }
