@@ -1,9 +1,11 @@
-use anyhow::{Context, Result};
-use futures_util::StreamExt;
-use reqwest::{Method, Response};
-use tracing::warn;
 use crate::gemini::client::Client;
+use crate::gemini::error::GeminiError;
 use crate::gemini::types::*;
+use futures_util::{Stream, StreamExt, TryStreamExt};
+use reqwest::{Method, Response};
+use tokio_util::codec::{FramedRead, LinesCodec};
+use tokio_util::io::StreamReader;
+use tracing::warn;
 
 /// A builder for creating interaction requests.
 pub struct InteractionRequestBuilder<'a> {
@@ -72,7 +74,7 @@ impl<'a> InteractionRequestBuilder<'a> {
 
     pub fn thinking_level(mut self, level: ThinkingLevel) -> Self {
         let mut config = self.request.generation_config.take().unwrap_or_default();
-        config.thinking_config = Some(ThinkingConfig { thinking_level: level });
+        config.thinking_level = Some(level);
         self.request.generation_config = Some(config);
         self
     }
@@ -83,72 +85,75 @@ impl<'a> InteractionRequestBuilder<'a> {
     }
 
     /// Sends the interaction request and returns the full response.
-    pub async fn send(self) -> Result<InteractionResponse> {
+    pub async fn send(self) -> Result<InteractionResponse, GeminiError> {
         let response = self.client
             .request(Method::POST, "/v1beta/interactions")
             .json(&self.request)
             .send()
-            .await
-            .context("Failed to send interaction request")?;
-
+            .await?;
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Interaction API error ({}): {}", status, error_text));
-        }
+            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&error_text) {
+                api_error.message
+            } else {
+                error_text
+            };
 
-        let interaction_resp: InteractionResponse = response.json().await
-            .context("Failed to parse interaction response")?;
-        
+            return Err(GeminiError::Api {
+                code: status.to_string(),
+                message,
+            });
+        }
+        let interaction_resp: InteractionResponse = response.json().await?;
         Ok(interaction_resp)
     }
 
     /// Starts a streaming interaction.
-    pub async fn stream(mut self) -> Result<impl futures_util::Stream<Item = Result<InteractionEvent>>> {
+    pub async fn stream(mut self) -> Result<impl Stream<Item = Result<InteractionEvent, GeminiError>>, GeminiError> {
         self.request.stream = Some(true);
-        
         let response = self.client
             .request(Method::POST, "/v1beta/interactions")
             .json(&self.request)
             .send()
-            .await
-            .context("Failed to start interaction stream")?;
-
+            .await?;
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Interaction Stream API error ({}): {}", status, error_text));
-        }
+            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&error_text) {
+                api_error.message
+            } else {
+                error_text
+            };
 
+            return Err(GeminiError::Api {
+                code: status.to_string(),
+                message,
+            });
+        }
         Ok(parse_sse_stream(response))
     }
 }
 
-fn parse_sse_stream(response: Response) -> impl futures_util::Stream<Item = Result<InteractionEvent>> {
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-
+fn parse_sse_stream(response: Response) -> impl Stream<Item = Result<InteractionEvent, GeminiError>> {
+    let stream = response.bytes_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    
+    let reader = StreamReader::new(stream);
+    let codec = LinesCodec::new();
+    let mut reader = FramedRead::new(reader, codec);
     async_stream::try_stream! {
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("Error reading stream chunk")?;
-            let chunk_str = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&chunk_str);
-
-            while let Some(line_end) = buffer.find('\n') {
-                let line = buffer.drain(..line_end + 1).collect::<String>();
-                let line = line.trim();
-
-                if line.starts_with("data: ") {
-                    let data = &line["data: ".len()..];
-                    if data == "[DONE]" {
-                        return;
-                    }
-
-                    match serde_json::from_str::<InteractionEvent>(data) {
-                        Ok(event) => yield event,
-                        Err(e) => {
-                            warn!("Failed to parse SSE data: {} | Data: {}", e, data);
-                        }
+        while let Some(line_res) = reader.next().await {
+            let line = line_res?;
+            if line.starts_with("data: ") {
+                let data = &line["data: ".len()..];
+                if data == "[DONE]" {
+                    return;
+                }
+                match serde_json::from_str::<InteractionEvent>(data) {
+                    Ok(event) => yield event,
+                    Err(e) => {
+                        warn!("Failed to parse SSE data: {} | Data: {}", e, data);
                     }
                 }
             }

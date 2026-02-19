@@ -1,13 +1,13 @@
 use thiserror::Error;
 use crate::gemini::types::ApiError;
+use tokio_util::codec::LinesCodecError;
 
 #[derive(Error, Debug)]
 pub enum GeminiError {
-    #[error("API Error: {message} (code: {code}, status: {status})")]
+    #[error("API Error: {message} (code: {code})")]
     Api {
-        code: u16,
+        code: String,
         message: String,
-        status: String,
     },
     #[error("HTTP Error: {0}")]
     Http(#[from] reqwest::Error),
@@ -15,6 +15,10 @@ pub enum GeminiError {
     Serde(#[from] serde_json::Error),
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Stream Error: {0}")]
+    Stream(String),
+    #[error("Codec Error: {0}")]
+    Codec(#[from] LinesCodecError),
     #[error("Generic Error: {0}")]
     Other(String),
 }
@@ -24,7 +28,6 @@ impl From<ApiError> for GeminiError {
         GeminiError::Api {
             code: err.code,
             message: err.message,
-            status: err.status,
         }
     }
 }

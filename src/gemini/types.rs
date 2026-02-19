@@ -12,77 +12,64 @@ pub enum Role {
 
 /// A piece of content in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct Content {
-    /// The role of the content creator.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
-    /// The parts that make up the content.
     pub parts: Vec<Part>,
 }
 
-/// A part of a content object.
+/// A part of a content object in the Interactions API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Part {
-    /// Text part.
-    Text(String),
-    /// Inline data (base64 encoded).
-    InlineData(Blob),
-    /// File data (URI reference).
-    FileData(FileData),
-    /// A predicted function call.
+    Text { text: String },
+    Image(MediaPart),
+    Audio(MediaPart),
+    Video(MediaPart),
+    Document(MediaPart),
     FunctionCall(FunctionCall),
-    /// A result from a function call.
     FunctionResponse(FunctionResponse),
 }
 
-/// A blob of data.
+/// A media part (Image, Audio, Video, Document).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Blob {
-    /// The IANA standard MIME type of the data.
+#[serde(rename_all = "snake_case")]
+pub struct MediaPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
     pub mime_type: String,
-    /// Raw bytes data, base64-encoded.
-    pub data: String,
-}
-
-/// A reference to data stored in a file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileData {
-    /// The IANA standard MIME type of the data.
-    pub mime_type: String,
-    /// The URI of the file.
-    pub file_uri: String,
 }
 
 /// A predicted function call from the model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct FunctionCall {
-    /// The unique ID of the function call.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// The name of the function to call.
     pub name: String,
-    /// The arguments to pass to the function.
     pub args: HashMap<String, serde_json::Value>,
-    /// Thought signature for maintaining reasoning context.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
 /// A result from a function call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct FunctionResponse {
-    /// The unique ID of the function call this response is for.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// The name of the function.
     pub name: String,
-    /// The result of the function call.
     pub response: serde_json::Value,
 }
 
 /// A single turn in a stateless conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct Turn {
-    /// The role of the turn.
     pub role: Role,
-    /// The content of the turn.
     pub content: Content,
 }
 
@@ -90,11 +77,8 @@ pub struct Turn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InteractionInput {
-    /// Simple text prompt.
     Text(String),
-    /// List of content objects.
-    Contents(Vec<Content>),
-    /// List of turns (for history replay).
+    Parts(Vec<Part>),
     Turns(Vec<Turn>),
 }
 
@@ -102,13 +86,9 @@ pub enum InteractionInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Tool {
-    /// Google Search grounding.
     GoogleSearch,
-    /// Python code execution.
     CodeExecution,
-    /// Native URL context fetching.
     UrlContext,
-    /// Custom function declaration.
     Function {
         #[serde(flatten)]
         declaration: FunctionDeclaration,
@@ -119,177 +99,158 @@ pub enum Tool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
-    /// The model decides which tools to use.
     Auto,
-    /// The model must use one of the specified tools.
     Any,
-    /// The model must use the specified function.
     Function { name: String },
-    /// The model must not use any tools.
     None,
 }
 
 /// A declaration of a custom function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct FunctionDeclaration {
-    /// The name of the function.
     pub name: String,
-    /// A description of the function.
     pub description: String,
-    /// The parameters the function accepts, defined as a JSON schema.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<serde_json::Value>,
 }
 
-/// Configuration for content generation.
+/// Configuration for content generation in the Interactions API.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct GenerationConfig {
-    /// Thinking level configuration.
-    pub thinking_config: Option<ThinkingConfig>,
-    /// Controls the randomness of the output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    /// The maximum number of tokens to generate.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
-    /// The MIME type of the response (e.g., "application/json").
-    pub response_mime_type: Option<String>,
-    /// The JSON schema for structured output.
-    pub response_schema: Option<serde_json::Value>,
-    /// Modalitiies to include in the response.
-    pub response_modalities: Option<Vec<String>>,
-}
-
-/// Thinking configuration for Gemini 3.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThinkingConfig {
-    /// The maximum depth of the model's internal reasoning process.
-    pub thinking_level: ThinkingLevel,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// Thinking levels for Gemini 3 models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
-    /// Minimal thinking for low latency.
     Minimal,
-    /// Low thinking level for faster responses.
     Low,
-    /// Balanced thinking level.
     Medium,
-    /// Maximum reasoning depth (Default).
     High,
 }
 
 /// Request for creating an interaction.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct InteractionRequest {
-    /// The name of the model to use.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// The name of the agent to use.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    /// The input to the interaction.
     pub input: InteractionInput,
-    /// The system instruction.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<Content>,
-    /// Previous interaction ID for stateful conversation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
-    /// Tools available to the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
-    /// Tool choice configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
-    /// Configuration for generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
-    /// Safety settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
-    /// Whether to store the interaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
-    /// Whether to run the interaction in the background.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<bool>,
-    /// Whether to stream the response.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 }
 
 /// Response from an interaction.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct InteractionResponse {
-    /// The unique ID of the interaction.
-    pub id: String,
-    /// The status of the interaction.
+    pub id: Option<String>,
+    pub model: String,
     pub status: String,
-    /// The outputs from the interaction.
+    #[serde(default)]
     pub outputs: Vec<InteractionOutput>,
-    /// Metadata about the interaction.
-    pub metadata: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// An output from an interaction.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InteractionOutput {
-    /// Text output.
-    #[serde(rename_all = "camelCase")]
-    Text { text: String },
-    /// Predicted function call.
+    Text { 
+        #[serde(default)]
+        text: String 
+    },
+    Thought { 
+        #[serde(default)]
+        signature: String 
+    },
+    #[serde(rename = "thought_signature")]
+    ThoughtSignature { 
+        #[serde(default)]
+        signature: String 
+    },
     FunctionCall(FunctionCall),
-    /// Result from a search tool.
+    FunctionResponse(FunctionResponse),
     SearchTool(serde_json::Value),
-    /// Partial text or thoughts (for streaming).
-    #[serde(rename_all = "camelCase")]
-    ContentDelta { text: String, thought: Option<bool> },
+    GoogleSearchCall(serde_json::Value),
+    GoogleSearchResult(serde_json::Value),
+    ContentDelta { 
+        #[serde(default)]
+        text: String, 
+        thought: Option<bool> 
+    },
+    #[serde(other)]
+    Unknown,
 }
 
 /// Events yielded during a streaming interaction.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
+#[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum InteractionEvent {
-    /// Interaction started.
-    InteractionStart { id: String, metadata: Option<serde_json::Value> },
-    /// Status update.
+    #[serde(rename = "interaction.start")]
+    InteractionStart { interaction: InteractionResponse },
+    #[serde(rename = "interaction.status_update")]
     StatusUpdate { status: String },
-    /// Content delta (text chunk).
-    ContentDelta { 
-        text: String, 
-        #[serde(default)]
-        thought: bool,
-        thought_signature: Option<String>,
-    },
-    /// Predicted function call.
-    FunctionCall(FunctionCall),
-    /// Interaction completed.
-    InteractionComplete { result: InteractionResponse },
-    /// An error occurred.
-    Error { error: ApiError },
+    #[serde(rename = "content.delta")]
+    ContentDelta { delta: InteractionOutput, index: Option<u32> },
+    #[serde(rename = "interaction.complete")]
+    InteractionComplete { interaction: InteractionResponse },
+    #[serde(other)]
+    Other,
 }
 
 /// Structured API error.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct ApiError {
-    pub code: u16,
+    pub code: String,
     pub message: String,
-    pub status: String,
 }
 
-/// Media resolution levels for Gemini 3.
+/// Safety setting.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MediaResolution {
-    MediaResolutionLow,
-    MediaResolutionMedium,
-    MediaResolutionHigh,
-    MediaResolutionUltraHigh,
-}
-
-/// Safety setting for content generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SafetySetting {
-    /// The category of safety to configure.
     pub category: SafetyCategory,
-    /// The threshold for the safety filter.
     pub threshold: SafetyThreshold,
 }
 
-/// Categories of safety filters.
+/// Safety categories.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SafetyCategory {
@@ -300,7 +261,8 @@ pub enum SafetyCategory {
     CivicIntegrity,
 }
 
-/// Thresholds for safety filters.
+/// Safety thresholds.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SafetyThreshold {
@@ -310,9 +272,10 @@ pub enum SafetyThreshold {
     BlockLowAndAbove,
 }
 
-/// Metadata for a file uploaded to the API.
+/// File metadata.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct File {
     pub name: String,
     pub display_name: Option<String>,
@@ -327,10 +290,10 @@ pub struct File {
     pub state: FileState,
     pub source: Option<FileSource>,
     pub error: Option<serde_json::Value>,
-    pub video_metadata: Option<VideoFileMetadata>,
 }
 
-/// The state of a file.
+/// File state.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FileState {
@@ -340,7 +303,8 @@ pub enum FileState {
     Failed,
 }
 
-/// The source of a file.
+/// File source.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FileSource {
@@ -350,40 +314,37 @@ pub enum FileSource {
     Registered,
 }
 
-/// Metadata for a video file.
+/// List files response.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VideoFileMetadata {
-    pub video_duration: String,
-}
-
-/// Response for listing files.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct ListFilesResponse {
     pub files: Vec<File>,
     pub next_page_token: Option<String>,
 }
 
-/// Request for creating a batch.
+/// Batch request.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct BatchRequest {
     pub display_name: String,
     pub input_config: BatchInputConfig,
 }
 
-/// Input configuration for a batch.
+/// Batch input config.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 #[serde(untagged)]
 pub enum BatchInputConfig {
     FileName { file_name: String },
 }
 
-/// Metadata for a batch.
+/// Batch metadata.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct Batch {
     pub name: String,
     pub display_name: String,
@@ -394,8 +355,9 @@ pub struct Batch {
     pub update_time: String,
 }
 
-/// The state of a batch.
+/// Batch state.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BatchState {
     BatchStateUnspecified,
@@ -407,8 +369,10 @@ pub enum BatchState {
     Expired,
 }
 
-/// A long-running operation.
+/// Operation.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct Operation {
     pub name: String,
     pub done: bool,
@@ -416,9 +380,10 @@ pub struct Operation {
     pub response: Option<serde_json::Value>,
 }
 
-/// Metadata for a cached content.
+/// Cached content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
 pub struct CachedContent {
     pub name: Option<String>,
     pub model: String,

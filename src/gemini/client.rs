@@ -5,9 +5,9 @@ use tracing::debug;
 #[derive(Clone)]
 pub struct Client {
     pub(crate) http_client: HttpClient,
-    pub(crate) api_key: String,
-    pub(crate) model: String,
-    pub(crate) base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub base_url: String,
 }
 
 impl Client {
@@ -34,7 +34,7 @@ impl Client {
     }
 
     /// Builds a request with the necessary headers and API key.
-    pub(crate) fn request(&self, method: Method, path: &str) -> RequestBuilder {
+    pub fn request(&self, method: Method, path: &str) -> RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
         debug!("Building request: {} {}", method, url);
         
