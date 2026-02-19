@@ -20,6 +20,8 @@ mime_guess = "2.0"
 futures-util = "0.3"
 async-stream = "0.3"
 tokio-util = { version = "0.7.18", features = ["codec", "io"] }
+uuid = { version = "1.21.0", features = ["v4"] }
+http = "1.4.0"
 
 [dev-dependencies]
 mockito = "1.7.2"

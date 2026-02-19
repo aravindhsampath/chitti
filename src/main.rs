@@ -117,9 +117,6 @@ async fn run_interaction_loop(config: config::Config) -> Result<()> {
                 }
                 "/upload" if parts.len() > 1 => {
                     println!("Uploading {}...", parts[1]);
-                    /*
-                    // Placeholder for upload logic if the method existed, but we commented it out or it's unused.
-                    // If upload_file is available, we'd use it.
                     match client.upload_file(parts[1], None).await {
                         Ok(file) => {
                             println!("File uploaded: {}", file.uri);
@@ -131,8 +128,6 @@ async fn run_interaction_loop(config: config::Config) -> Result<()> {
                         }
                         Err(e) => error!("Upload failed: {:?}", e),
                     }
-                    */
-                    println!("Upload feature pending implementation.");
                 }
                 _ => println!("Unknown command."),
             }
@@ -143,16 +138,16 @@ async fn run_interaction_loop(config: config::Config) -> Result<()> {
         let input = if pending_files.is_empty() {
             gemini::InteractionInput::Text(prompt.to_string())
         } else {
-            let mut parts = vec![gemini::Part::Text { text: prompt.to_string() }];
+            let mut parts = vec![gemini::InteractionPart::Text { text: prompt.to_string() }];
             for media in pending_files.drain(..) {
                 let part = if media.mime_type.starts_with("image/") {
-                    gemini::Part::Image(media)
+                    gemini::InteractionPart::Image(media)
                 } else if media.mime_type.starts_with("audio/") {
-                    gemini::Part::Audio(media)
+                    gemini::InteractionPart::Audio(media)
                 } else if media.mime_type.starts_with("video/") {
-                    gemini::Part::Video(media)
+                    gemini::InteractionPart::Video(media)
                 } else {
-                    gemini::Part::Document(media)
+                    gemini::InteractionPart::Document(media)
                 };
                 parts.push(part);
             }

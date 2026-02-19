@@ -1,31 +1,46 @@
-use anyhow::{Context, Result};
 use reqwest::Method;
+use tracing::instrument;
 use crate::gemini::client::Client;
 use crate::gemini::types::*;
+use crate::gemini::error::{GeminiError, Result};
 
 impl Client {
     /// Creates a batch for processing multiple requests.
+    #[instrument(skip(self), fields(model = %self.model))]
     pub async fn create_batch(&self, display_name: String, file_name: String) -> Result<Operation> {
         let path = format!("/v1beta/models/{}:batchGenerateContent", self.model);
         let request = BatchRequest {
             display_name,
-            input_config: BatchInputConfig::FileName { file_name },
+            input_config: BatchInputConfig { file_name },
         };
 
         let response = self.request(Method::POST, &path)
             .json(&request)
             .send()
-            .await
-            .context("Failed to create batch")?;
+            .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Batch API create error: {}", response.status()));
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            
+            // Try to parse ApiError
+            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
+                api_error.message
+            } else {
+                text
+            };
+
+            return Err(GeminiError::Api {
+                code: status.to_string(),
+                message,
+            });
         }
 
         Ok(response.json().await?)
     }
 
     /// Gets the status of a batch operation.
+    #[instrument(skip(self))]
     pub async fn get_batch_operation(&self, name: &str) -> Result<Operation> {
         let path = if name.starts_with("batches/") {
             format!("/v1beta/{}", name)
@@ -35,11 +50,23 @@ impl Client {
 
         let response = self.request(Method::GET, &path)
             .send()
-            .await
-            .context("Failed to get batch status")?;
+            .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Batch API get error: {}", response.status()));
+             let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            
+            // Try to parse ApiError
+            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
+                api_error.message
+            } else {
+                text
+            };
+
+            return Err(GeminiError::Api {
+                code: status.to_string(),
+                message,
+            });
         }
 
         Ok(response.json().await?)

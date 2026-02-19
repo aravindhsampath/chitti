@@ -1,10 +1,12 @@
 use reqwest::Method;
 use std::path::Path;
+use tracing::instrument;
 use crate::gemini::client::Client;
 use crate::gemini::types::*;
 use crate::gemini::error::{GeminiError, Result};
 impl Client {
     /// Uploads a file to the Gemini File API.
+    #[instrument(skip(self, path))]
     pub async fn upload_file<P: AsRef<Path>>(&self, path: P, display_name: Option<String>) -> Result<File> {
         let path = path.as_ref();
         let file_name = path.file_name()
@@ -63,10 +65,15 @@ impl Client {
             return Err(GeminiError::Api { code, message });
         }
         let result: serde_json::Value = response.json().await?;
-        let file: File = serde_json::from_value(result["file"].clone())?;
+        let file: File = serde_json::from_value(result["file"].clone())
+            .map_err(|e| {
+                tracing::error!("Failed to parse file metadata: {} | Body: {}", e, result);
+                GeminiError::Serde(e)
+            })?;
         Ok(file)
     }
     /// Gets metadata for a file.
+    #[instrument(skip(self))]
     pub async fn get_file(&self, name: &str) -> Result<File> {
         let path = if name.starts_with("files/") {
             format!("/v1beta/{}", name)
@@ -86,6 +93,7 @@ impl Client {
         Ok(response.json().await?)
     }
     /// Lists files owned by the project.
+    #[instrument(skip(self))]
     pub async fn list_files(&self, page_size: Option<u32>, page_token: Option<String>) -> Result<ListFilesResponse> {
         let mut query = vec![];
         if let Some(ps) = page_size {
@@ -108,6 +116,7 @@ impl Client {
         Ok(response.json().await?)
     }
     /// Deletes a file.
+    #[instrument(skip(self))]
     pub async fn delete_file(&self, name: &str) -> Result<()> {
         let path = if name.starts_with("files/") {
             format!("/v1beta/{}", name)

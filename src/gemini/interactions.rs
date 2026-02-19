@@ -1,4 +1,5 @@
 use crate::gemini::client::Client;
+use tracing::debug;
 use crate::gemini::error::GeminiError;
 use crate::gemini::types::*;
 use futures_util::{Stream, StreamExt, TryStreamExt};
@@ -6,6 +7,7 @@ use reqwest::{Method, Response};
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
 use tracing::warn;
+use tracing::instrument;
 
 /// A builder for creating interaction requests.
 pub struct InteractionRequestBuilder<'a> {
@@ -19,6 +21,7 @@ impl<'a> InteractionRequestBuilder<'a> {
             client,
             request: InteractionRequest {
                 model: Some(client.model.clone()),
+                cached_content: None,
                 agent: None,
                 input,
                 system_instruction: None,
@@ -40,13 +43,18 @@ impl<'a> InteractionRequestBuilder<'a> {
         self
     }
 
+    pub fn cached_content(mut self, name: String) -> Self {
+        self.request.cached_content = Some(name);
+        self
+    }
+
     pub fn agent(mut self, agent: String) -> Self {
         self.request.agent = Some(agent);
         self.request.model = None; // Model and agent are mutually exclusive in API
         self
     }
 
-    pub fn system_instruction(mut self, instruction: Content) -> Self {
+    pub fn system_instruction(mut self, instruction: InteractionContent) -> Self {
         self.request.system_instruction = Some(instruction);
         self
     }
@@ -85,6 +93,7 @@ impl<'a> InteractionRequestBuilder<'a> {
     }
 
     /// Sends the interaction request and returns the full response.
+    #[instrument(skip(self), fields(model = ?self.request.model))]
     pub async fn send(self) -> Result<InteractionResponse, GeminiError> {
         let response = self.client
             .request(Method::POST, "/v1beta/interactions")
@@ -105,11 +114,17 @@ impl<'a> InteractionRequestBuilder<'a> {
                 message,
             });
         }
-        let interaction_resp: InteractionResponse = response.json().await?;
+        let text = response.text().await.map_err(GeminiError::Http)?;
+        let interaction_resp: InteractionResponse = serde_json::from_str(&text)
+            .map_err(|e| {
+                tracing::error!("Failed to parse interaction response: {} | Body: {}", e, text);
+                GeminiError::Serde(e)
+            })?;
         Ok(interaction_resp)
     }
 
     /// Starts a streaming interaction.
+    #[instrument(skip(self), fields(model = ?self.request.model))]
     pub async fn stream(mut self) -> Result<impl Stream<Item = Result<InteractionEvent, GeminiError>>, GeminiError> {
         self.request.stream = Some(true);
         let response = self.client
@@ -162,6 +177,7 @@ fn parse_sse_stream(response: Response) -> impl Stream<Item = Result<Interaction
 }
 
 impl Client {
+    #[instrument(skip(self))]
     /// Creates a new interaction builder with the given input.
     pub fn interaction(&self, input: InteractionInput) -> InteractionRequestBuilder<'_> {
         InteractionRequestBuilder::new(self, input)
