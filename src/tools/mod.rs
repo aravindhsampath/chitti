@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::brains::gemini::types::FunctionDeclaration;
 
 pub mod bash;
+pub mod editor;
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {

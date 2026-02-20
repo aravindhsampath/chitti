@@ -17,6 +17,7 @@ use bridges::CommBridge;
 use conductor::Conductor;
 use tools::ToolRegistry;
 use tools::bash::BashTool;
+use tools::editor::EditorTool;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,6 +36,7 @@ async fn main() -> Result<()> {
     // 3. Initialize Tool Registry
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(BashTool));
+    registry.register(Box::new(EditorTool));
     let tools = Arc::new(registry);
 
     // 4. Initialize Components
@@ -46,6 +48,7 @@ async fn main() -> Result<()> {
 
     // 5. Start the Conductor
     let mut conductor = Conductor::new(brain, bridge.clone(), rx, tools.clone(), config.gemini_model, config.dev_mode);
+    conductor.init().await?;
     
     // Send an initial empty message or system event to sync the UI state
     bridge.send(crate::conductor::events::SystemEvent::Text(

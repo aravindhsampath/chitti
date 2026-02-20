@@ -12,20 +12,20 @@ use crate::tools::ToolRegistry;
 pub mod events;
 pub mod session;
 
+use crate::conductor::session::Session;
+use std::path::PathBuf;
+
 pub struct Conductor {
     brain: Box<dyn BrainEngine>,
     bridge: Arc<dyn CommBridge>,
     events_rx: mpsc::Receiver<UserEvent>,
     tools: Arc<ToolRegistry>,
-    previous_interaction_id: Option<String>,
+    session: Session,
+    session_path: PathBuf,
     pending_steering: VecDeque<String>,
     
-    // Session State
-    model: String,
+    // UI Metadata
     streaming: bool,
-    thinking_level: String,
-    memory_enabled: bool,
-    dev_mode: bool,
     pwd: String,
     git_branch: String,
 }
@@ -39,23 +39,37 @@ impl Conductor {
         model: String,
         dev_mode: bool,
     ) -> Self {
+        let session_dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".chitti");
+        
+        let session_path = session_dir.join("session.json");
+        
         let mut conductor = Self {
             brain,
             bridge,
             events_rx,
             tools,
-            previous_interaction_id: None,
+            session: Session::new(model, dev_mode),
+            session_path,
             pending_steering: VecDeque::new(),
-            model,
             streaming: true,
-            thinking_level: "high".to_string(),
-            memory_enabled: true,
-            dev_mode,
             pwd: String::new(),
             git_branch: String::new(),
         };
         conductor.refresh_system_metadata();
         conductor
+    }
+
+    pub async fn init(&mut self) -> Result<()> {
+        if self.session_path.exists() {
+            if let Ok(loaded) = Session::load(&self.session_path).await {
+                self.session = loaded;
+                tracing::info!("Resumed previous session from {:?}", self.session_path);
+            }
+        }
+        Ok(())
     }
 
     fn refresh_system_metadata(&mut self) {
@@ -78,11 +92,11 @@ impl Conductor {
 
     pub fn get_state_snapshot(&self) -> SessionState {
         SessionState {
-            model: self.model.clone(),
-            thinking_level: self.thinking_level.clone(),
+            model: self.session.model.clone(),
+            thinking_level: self.session.thinking_level.clone(),
             streaming: self.streaming,
-            memory_enabled: self.memory_enabled,
-            dev_mode: self.dev_mode,
+            memory_enabled: self.session.memory_enabled,
+            dev_mode: self.session.dev_mode,
             pwd: self.pwd.clone(),
             git_branch: self.git_branch.clone(),
         }
@@ -95,7 +109,9 @@ impl Conductor {
                 match parts[0] {
                     "/exit" | "/quit" => break,
                     "/clear" => {
-                        self.previous_interaction_id = None;
+                        self.session.interaction_id = None;
+                        self.session.turns.clear();
+                        let _ = self.session.save(&self.session_path).await;
                         self.bridge.send(SystemEvent::Info("Context cleared.".to_string(), self.get_state_snapshot())).await?;
                     }
                     "/stream" => {
@@ -103,15 +119,17 @@ impl Conductor {
                         self.bridge.send(SystemEvent::Info(format!("Streaming is now {}", if self.streaming {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
                     }
                     "/thinking" if parts.len() > 1 => {
-                        self.thinking_level = parts[1].to_string();
-                        self.bridge.send(SystemEvent::Info(format!("Thinking level set to {}", self.thinking_level), self.get_state_snapshot())).await?;
+                        self.session.thinking_level = parts[1].to_string();
+                        let _ = self.session.save(&self.session_path).await;
+                        self.bridge.send(SystemEvent::Info(format!("Thinking level set to {}", self.session.thinking_level), self.get_state_snapshot())).await?;
                     }
                     "/memory" => {
-                        self.memory_enabled = !self.memory_enabled;
-                        if !self.memory_enabled {
-                            self.previous_interaction_id = None;
+                        self.session.memory_enabled = !self.session.memory_enabled;
+                        if !self.session.memory_enabled {
+                            self.session.interaction_id = None;
                         }
-                        self.bridge.send(SystemEvent::Info(format!("Session memory is now {}", if self.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                        let _ = self.session.save(&self.session_path).await;
+                        self.bridge.send(SystemEvent::Info(format!("Session memory is now {}", if self.session.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
                     }
                     "/help" | "/" => {
                         let help_text = "Available Commands:\n\
@@ -131,7 +149,7 @@ impl Conductor {
                 if let Err(e) = self.handle_conversation(input).await {
                     tracing::error!("Conversation error: {:?}", e);
                     let _ = self.bridge.send(SystemEvent::Error(format!("Conversation Error: {:?}", e), self.get_state_snapshot())).await;
-                    self.previous_interaction_id = None;
+                    self.session.interaction_id = None;
                 }
             }
         }
@@ -139,16 +157,15 @@ impl Conductor {
     }
 
     async fn handle_conversation(&mut self, initial_prompt: String) -> Result<()> {
-        let mut turn_history: Vec<InteractionTurn> = Vec::new();
         // The active_interaction_id tracks the parent ID for follow-ups *within* this interaction loop.
-        let mut active_interaction_id = if self.memory_enabled { self.previous_interaction_id.clone() } else { None };
+        let mut active_interaction_id = if self.session.memory_enabled { self.session.interaction_id.clone() } else { None };
         
         let mut next_input = InteractionInput::Text(initial_prompt);
 
         loop {
             // 1. Incorporate steering
             while let Some(steer) = self.pending_steering.pop_front() {
-                turn_history.push(InteractionTurn {
+                self.session.turns.push(InteractionTurn {
                     role: Role::User,
                     content: InteractionContent::from(steer),
                 });
@@ -156,35 +173,35 @@ impl Conductor {
 
             // 2. Prepare Context
             let context = TurnContext {
-                input: if self.memory_enabled {
+                input: if self.session.memory_enabled {
                     next_input.clone()
                 } else {
                     // Stateless Replay: append current next_input to turn_history
                     match &next_input {
                         InteractionInput::Text(t) => {
-                            turn_history.push(InteractionTurn {
+                            self.session.turns.push(InteractionTurn {
                                 role: Role::User,
                                 content: InteractionContent::from(t.clone()),
                             });
                         }
                         InteractionInput::Parts(p) => {
-                            turn_history.push(InteractionTurn {
+                            self.session.turns.push(InteractionTurn {
                                 role: Role::User,
                                 content: InteractionContent::from(p.clone()),
                             });
                         }
                         _ => {}
                     }
-                    InteractionInput::Turns(turn_history.clone())
+                    InteractionInput::Turns(self.session.turns.clone())
                 },
-                previous_interaction_id: if self.memory_enabled { active_interaction_id.clone() } else { None },
+                previous_interaction_id: if self.session.memory_enabled { active_interaction_id.clone() } else { None },
                 streaming: self.streaming,
-                thinking_level: self.thinking_level.clone(),
-                memory_enabled: self.memory_enabled,
-                dev_mode: self.dev_mode,
+                thinking_level: self.session.thinking_level.clone(),
+                memory_enabled: self.session.memory_enabled,
+                dev_mode: self.session.dev_mode,
             };
 
-            if self.dev_mode {
+            if self.session.dev_mode {
                 self.bridge.send(SystemEvent::Debug(format!("TurnContext Sent: {:#?}", context), self.get_state_snapshot())).await?;
             }
 
@@ -195,7 +212,7 @@ impl Conductor {
 
             while let Some(brain_res) = brain_stream.next().await {
                 let event = brain_res?;
-                if self.dev_mode {
+                if self.session.dev_mode {
                     self.bridge.send(SystemEvent::Debug(format!("Brain Event: {:#?}", event), self.get_state_snapshot())).await?;
                 }
 
@@ -228,9 +245,9 @@ impl Conductor {
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
                             active_interaction_id = Some(id.clone());
-                            if self.memory_enabled {
+                            if self.session.memory_enabled {
                                 tracing::debug!(interaction_id = %id, "Turn completed, updated session ID");
-                                self.previous_interaction_id = Some(id);
+                                self.session.interaction_id = Some(id);
                             }
                         }
                     }
@@ -241,14 +258,15 @@ impl Conductor {
             }
 
             // 4. Capture model response for history
-            if !self.memory_enabled && !model_response_parts.is_empty() {
-                turn_history.push(InteractionTurn {
+            if !self.session.memory_enabled && !model_response_parts.is_empty() {
+                self.session.turns.push(InteractionTurn {
                     role: Role::Model,
                     content: InteractionContent::from(model_response_parts),
                 });
             }
 
             if tool_calls.is_empty() {
+                self.session.save(&self.session_path).await?;
                 self.bridge.send(SystemEvent::Ready(self.get_state_snapshot())).await?;
                 break;
             }
@@ -275,7 +293,7 @@ impl Conductor {
                     match self.tools.execute(&name, args).await {
                         Ok(res) => {
                             self.refresh_system_metadata();
-                            if self.dev_mode {
+                            if self.session.dev_mode {
                                 self.bridge.send(SystemEvent::Debug(format!("Tool Result: {:#?}", res), self.get_state_snapshot())).await?;
                             }
                             res.output
@@ -349,7 +367,7 @@ mod tests {
 
         tx.send(UserEvent::Input("ping".to_string())).await?;
         conductor.handle_conversation("ping".to_string()).await?;
-        assert_eq!(conductor.previous_interaction_id, Some("id_1".to_string()));
+        assert_eq!(conductor.session.interaction_id, Some("id_1".to_string()));
         
         conductor.handle_conversation("pong".to_string()).await?;
         let history = calls.lock().unwrap();
@@ -420,7 +438,7 @@ mod tests {
             false
         );
 
-        conductor.memory_enabled = false;
+        conductor.session.memory_enabled = false;
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -454,7 +472,7 @@ mod tests {
             false
         );
 
-        conductor.previous_interaction_id = Some("existing".to_string());
+        conductor.session.interaction_id = Some("existing".to_string());
         tx.send(UserEvent::Input("/clear".to_string())).await?;
         
         let tx_clone = tx.clone();
@@ -465,7 +483,7 @@ mod tests {
 
         conductor.run().await?;
 
-        assert_eq!(conductor.previous_interaction_id, None);
+        assert_eq!(conductor.session.interaction_id, None);
         Ok(())
     }
 
