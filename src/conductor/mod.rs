@@ -140,6 +140,9 @@ impl Conductor {
     async fn handle_conversation(&mut self, initial_prompt: String) -> Result<()> {
         let mut current_prompt = initial_prompt;
         let mut current_tool_results = Vec::new();
+        // The ID used for follow-ups in this specific interaction sequence.
+        // We initialize it from the session only if memory is enabled.
+        let mut active_interaction_id = if self.memory_enabled { self.previous_interaction_id.clone() } else { None };
 
         loop {
             while let Some(steer) = self.pending_steering.pop_front() {
@@ -151,7 +154,8 @@ impl Conductor {
 
             let context = TurnContext {
                 prompt: current_prompt.clone(),
-                previous_interaction_id: if self.memory_enabled { self.previous_interaction_id.clone() } else { None },
+                // Use the active interaction ID for follow-ups, even if session memory is off.
+                previous_interaction_id: active_interaction_id.clone(),
                 tool_results: current_tool_results,
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),
@@ -188,8 +192,10 @@ impl Conductor {
                     }
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
+                            // Update the tracking ID for the next step in THIS turn (e.g. tool result)
+                            active_interaction_id = Some(id.clone());
                             if self.memory_enabled {
-                                tracing::debug!(interaction_id = %id, "Turn completed, updated interaction ID");
+                                tracing::debug!(interaction_id = %id, "Interaction step completed, updated session ID");
                                 self.previous_interaction_id = Some(id);
                             }
                         }
@@ -479,6 +485,44 @@ mod tests {
             }
         });
         assert!(help_sent);
+        Ok(())
+    }
+
+
+    #[tokio::test]
+    async fn test_conductor_private_mode_tool_id_retention() -> Result<()> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel(10);
+        
+        let mut conductor = Conductor::new(
+            Box::new(ToolMockBrain { calls: calls.clone() }), 
+            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
+            rx, 
+            Arc::new(ToolRegistry::new()),
+            "test-model".to_string(),
+            false
+        );
+
+        // DISABLE memory
+        conductor.memory_enabled = false;
+
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
+        });
+
+        conductor.handle_conversation("start".to_string()).await?;
+
+        let history = calls.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        // Turn 1 should have NO ID
+        assert_eq!(history[0].previous_interaction_id, None);
+        // Turn 2 MUST have the ID from Turn 1 to satisfy API requirements
+        assert_eq!(history[1].previous_interaction_id, Some("id_1".to_string()));
+        // BUT session memory must still be empty
+        assert_eq!(conductor.previous_interaction_id, None);
+
         Ok(())
     }
 }
