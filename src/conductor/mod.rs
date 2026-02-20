@@ -178,3 +178,171 @@ impl Conductor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conductor::events::{BrainEvent, UserEvent, SystemEvent, TurnContext};
+    use async_trait::async_trait;
+    use futures_util::stream;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    struct MockBrain {
+        calls: Arc<Mutex<Vec<TurnContext>>>,
+    }
+
+    #[async_trait]
+    impl BrainEngine for MockBrain {
+        async fn process_turn(&self, context: TurnContext) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
+            self.calls.lock().unwrap().push(context);
+            let id = format!("id_{}", self.calls.lock().unwrap().len());
+            Ok(Box::pin(stream::iter(vec![
+                Ok(BrainEvent::TextDelta("hello".to_string())),
+                Ok(BrainEvent::Complete { interaction_id: Some(id) }),
+            ])))
+        }
+    }
+
+    struct TestBridge {
+        sent: Arc<Mutex<Vec<SystemEvent>>>,
+    }
+
+    #[async_trait]
+    impl CommBridge for TestBridge {
+        async fn send(&self, event: SystemEvent) -> Result<()> {
+            self.sent.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_conductor_state_persistence() -> Result<()> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let brain = Box::new(MockBrain { calls: calls.clone() });
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let bridge = Arc::new(TestBridge { sent: sent.clone() });
+        
+        let (_tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()));
+        conductor.handle_conversation("ping".to_string()).await?;
+        assert_eq!(conductor.previous_interaction_id, Some("id_1".to_string()));
+        conductor.handle_conversation("pong".to_string()).await?;
+        let history = calls.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].prompt, "ping");
+        assert_eq!(history[0].previous_interaction_id, None);
+        assert_eq!(history[1].previous_interaction_id, Some("id_1".to_string()));
+        Ok(())
+    }
+        struct ToolMockBrain {
+        calls: Arc<Mutex<Vec<TurnContext>>>,
+    }
+
+    #[async_trait]
+    impl BrainEngine for ToolMockBrain {
+        async fn process_turn(&self, context: TurnContext) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
+            self.calls.lock().unwrap().push(context);
+            if self.calls.lock().unwrap().len() == 1 {
+                Ok(Box::pin(stream::iter(vec![
+                    Ok(BrainEvent::ToolCall { name: "test_tool".to_string(), id: "call_1".to_string(), args: serde_json::json!({}) }),
+                    Ok(BrainEvent::Complete { interaction_id: Some("id_1".to_string()) }),
+                ])))
+            } else {
+                Ok(Box::pin(stream::iter(vec![
+                    Ok(BrainEvent::TextDelta("ok".to_string())),
+                    Ok(BrainEvent::Complete { interaction_id: Some("id_2".to_string()) }),
+                ])))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_conductor_steering_injection() -> Result<()> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(
+            Box::new(ToolMockBrain { calls: calls.clone() }), 
+            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
+            rx, 
+            Arc::new(ToolRegistry::new())
+        );
+        // Start turn
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            // Wait for tool approval request
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // Send steering
+            tx_clone.send(UserEvent::Steer("actually do X".to_string())).await.unwrap();
+            // Send approval
+            tx_clone.send(UserEvent::Approve).await.unwrap();
+        });
+
+        conductor.handle_conversation("start".to_string()).await?;
+
+        let history = calls.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].prompt, "start");
+        assert_eq!(history[1].prompt, "actually do X");
+        assert_eq!(history[1].tool_results.len(), 1);
+        assert_eq!(history[1].tool_results[0].name, "test_tool");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_conductor_clear_command() -> Result<()> {
+        let (tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(
+            Box::new(MockBrain { calls: Arc::new(Mutex::new(Vec::new())) }), 
+            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
+            rx, 
+            Arc::new(ToolRegistry::new())
+        );
+
+        conductor.previous_interaction_id = Some("existing".to_string());
+        
+        // Simulate /clear command
+        tx.send(UserEvent::Command("/clear".to_string())).await?;
+        
+        // Run the main loop for a bit
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx_clone.send(UserEvent::Command("/exit".to_string())).await.unwrap();
+        });
+
+        conductor.run().await?;
+
+        assert_eq!(conductor.previous_interaction_id, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_conductor_tool_rejection() -> Result<()> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(
+            Box::new(ToolMockBrain { calls: calls.clone() }), 
+            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
+            rx, 
+            Arc::new(ToolRegistry::new())
+        );
+
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // REJECT the tool
+            tx_clone.send(UserEvent::Reject).await.unwrap();
+        });
+
+        conductor.handle_conversation("start".to_string()).await?;
+
+        let history = calls.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        // Turn 2 should contain an error result for the tool
+        assert_eq!(history[1].tool_results.len(), 1);
+        assert!(history[1].tool_results[0].is_error);
+        assert_eq!(history[1].tool_results[0].result["error"], "User rejected tool execution.");
+
+        Ok(())
+    }
+}
