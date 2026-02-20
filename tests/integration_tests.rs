@@ -1,4 +1,5 @@
 use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, CachedContent, Content};
+use anyhow::Result;
 
 use dotenvy::dotenv;
 use std::env;

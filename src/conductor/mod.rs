@@ -103,7 +103,14 @@ impl Conductor {
                     }
                 }
             } else {
-                self.handle_conversation(input).await?;
+                if let Err(e) = self.handle_conversation(input).await {
+                    tracing::error!("Conversation error: {:?}", e);
+                    let _ = self.bridge.send(SystemEvent::Error(format!("Conversation Error: {:?}", e), self.get_state_snapshot())).await;
+                    
+                    // CRITICAL: On any API/Conversation error, we should probably reset the interaction ID
+                    // because the current one is likely invalid for the next attempt.
+                    self.previous_interaction_id = None;
+                }
             }
         }
         Ok(())
@@ -149,6 +156,7 @@ impl Conductor {
                     }
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
+                            tracing::debug!(interaction_id = %id, "Turn completed, updated interaction ID");
                             self.previous_interaction_id = Some(id);
                         }
                     }

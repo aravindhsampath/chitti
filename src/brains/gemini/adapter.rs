@@ -65,6 +65,9 @@ impl BrainEngine for GeminiEngine {
                 match res {
                     Ok(evt) => {
                         match evt {
+                            crate::brains::gemini::types::InteractionEvent::InteractionStart { interaction } => {
+                                Ok(BrainEvent::Complete { interaction_id: interaction.id })
+                            }
                             crate::brains::gemini::types::InteractionEvent::ContentDelta { delta, .. } => {
                                 match delta {
                                     crate::brains::gemini::types::InteractionOutput::Text { text } => Ok(BrainEvent::TextDelta(text)),
@@ -82,13 +85,17 @@ impl BrainEngine for GeminiEngine {
                                             args: serde_json::to_value(fc.args).unwrap_or_default() 
                                         })
                                     }
-                                    _ => Ok(BrainEvent::Complete { interaction_id: None }),
+                                    _ => {
+                                        // Skip other output types without yielding Complete
+                                        // Yielding an empty ThoughtDelta or similar is better than Complete
+                                        Ok(BrainEvent::ThoughtDelta(String::new()))
+                                    },
                                 }
                             }
                             crate::brains::gemini::types::InteractionEvent::InteractionComplete { interaction } => {
                                 Ok(BrainEvent::Complete { interaction_id: interaction.id })
                             }
-                            _ => Ok(BrainEvent::Complete { interaction_id: None }),
+                            _ => Ok(BrainEvent::ThoughtDelta(String::new())),
                         }
                     }
                     Err(e) => Err(anyhow::anyhow!("Gemini stream error: {:?}", e)),
