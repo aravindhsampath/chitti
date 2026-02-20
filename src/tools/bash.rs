@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use serde::Deserialize;
 use anyhow::Result;
 use std::collections::HashMap;
 use tokio::process::Command;
@@ -7,6 +8,11 @@ use crate::tools::{ToolExecutor, ToolResult};
 use crate::brains::gemini::types::FunctionDeclaration;
 
 pub struct BashTool;
+
+#[derive(Deserialize)]
+struct BashArgs {
+    command: String,
+}
 
 #[async_trait]
 impl ToolExecutor for BashTool {
@@ -31,10 +37,9 @@ impl ToolExecutor for BashTool {
         }
     }
 
-    async fn execute(&self, args: HashMap<String, Value>) -> Result<ToolResult> {
-        let command_str = args.get("command")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?;
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let bash_args: BashArgs = serde_json::from_value(args)?;
+        let command_str = &bash_args.command;
 
         let output = Command::new("bash")
             .arg("-c")

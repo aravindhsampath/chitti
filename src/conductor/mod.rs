@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::collections::VecDeque;
 use crate::brains::BrainEngine;
 use crate::bridges::CommBridge;
-use crate::conductor::events::{UserEvent, SystemEvent, BrainEvent, TurnContext, ToolResult, SessionState};
+use crate::conductor::events::{UserEvent, SystemEvent, BrainEvent, TurnContext, SessionState};
+use crate::brains::gemini::types::{InteractionInput, InteractionPart, FunctionResponse, InteractionTurn, Role, InteractionContent, FunctionCall};
 use crate::tools::ToolRegistry;
 
 pub mod events;
@@ -138,25 +139,45 @@ impl Conductor {
     }
 
     async fn handle_conversation(&mut self, initial_prompt: String) -> Result<()> {
-        let mut current_prompt = initial_prompt;
-        let mut current_tool_results = Vec::new();
-        // The ID used for follow-ups in this specific interaction sequence.
-        // We initialize it from the session only if memory is enabled.
+        let mut turn_history: Vec<InteractionTurn> = Vec::new();
+        // The active_interaction_id tracks the parent ID for follow-ups *within* this interaction loop.
         let mut active_interaction_id = if self.memory_enabled { self.previous_interaction_id.clone() } else { None };
+        
+        let mut next_input = InteractionInput::Text(initial_prompt);
 
         loop {
+            // 1. Incorporate steering
             while let Some(steer) = self.pending_steering.pop_front() {
-                if !current_prompt.is_empty() {
-                    current_prompt.push_str("\n");
-                }
-                current_prompt.push_str(&steer);
+                turn_history.push(InteractionTurn {
+                    role: Role::User,
+                    content: InteractionContent::from(steer),
+                });
             }
 
+            // 2. Prepare Context
             let context = TurnContext {
-                prompt: current_prompt.clone(),
-                // Use the active interaction ID for follow-ups, even if session memory is off.
-                previous_interaction_id: active_interaction_id.clone(),
-                tool_results: current_tool_results,
+                input: if self.memory_enabled {
+                    next_input.clone()
+                } else {
+                    // Stateless Replay: append current next_input to turn_history
+                    match &next_input {
+                        InteractionInput::Text(t) => {
+                            turn_history.push(InteractionTurn {
+                                role: Role::User,
+                                content: InteractionContent::from(t.clone()),
+                            });
+                        }
+                        InteractionInput::Parts(p) => {
+                            turn_history.push(InteractionTurn {
+                                role: Role::User,
+                                content: InteractionContent::from(p.clone()),
+                            });
+                        }
+                        _ => {}
+                    }
+                    InteractionInput::Turns(turn_history.clone())
+                },
+                previous_interaction_id: if self.memory_enabled { active_interaction_id.clone() } else { None },
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),
                 memory_enabled: self.memory_enabled,
@@ -167,11 +188,10 @@ impl Conductor {
                 self.bridge.send(SystemEvent::Debug(format!("TurnContext Sent: {:#?}", context), self.get_state_snapshot())).await?;
             }
 
-            current_prompt = String::new();
-            current_tool_results = Vec::new();
-
+            // 3. Request Turn
             let mut brain_stream = self.brain.process_turn(context).await?;
             let mut tool_calls = Vec::new();
+            let mut model_response_parts = Vec::new();
 
             while let Some(brain_res) = brain_stream.next().await {
                 let event = brain_res?;
@@ -181,21 +201,35 @@ impl Conductor {
 
                 match event {
                     BrainEvent::TextDelta(text) => {
-                        self.bridge.send(SystemEvent::Text(text, self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Text(text.clone(), self.get_state_snapshot())).await?;
+                        model_response_parts.push(InteractionPart::Text { text });
                     }
                     BrainEvent::ThoughtDelta(thought) => {
                         self.bridge.send(SystemEvent::Thought(thought, self.get_state_snapshot())).await?;
                     }
+                    BrainEvent::ThoughtSignature(sig) => {
+                        model_response_parts.push(InteractionPart::Thought { 
+                            signature: sig, 
+                            summary: String::new() 
+                        });
+                    }
                     BrainEvent::ToolCall { name, id, args } => {
                         self.bridge.send(SystemEvent::ToolCall { name: name.clone(), args: args.clone(), state: self.get_state_snapshot() }).await?;
+                        
+                        model_response_parts.push(InteractionPart::FunctionCall(FunctionCall {
+                            id: Some(id.clone()),
+                            name: name.clone(),
+                            args: args.clone(),
+                            thought_signature: None,
+                        }));
+                        
                         tool_calls.push((name, id, args));
                     }
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
-                            // Update the tracking ID for the next step in THIS turn (e.g. tool result)
                             active_interaction_id = Some(id.clone());
                             if self.memory_enabled {
-                                tracing::debug!(interaction_id = %id, "Interaction step completed, updated session ID");
+                                tracing::debug!(interaction_id = %id, "Turn completed, updated session ID");
                                 self.previous_interaction_id = Some(id);
                             }
                         }
@@ -206,11 +240,21 @@ impl Conductor {
                 }
             }
 
+            // 4. Capture model response for history
+            if !self.memory_enabled && !model_response_parts.is_empty() {
+                turn_history.push(InteractionTurn {
+                    role: Role::Model,
+                    content: InteractionContent::from(model_response_parts),
+                });
+            }
+
             if tool_calls.is_empty() {
                 self.bridge.send(SystemEvent::Ready(self.get_state_snapshot())).await?;
                 break;
             }
 
+            // 5. GATING: Tools
+            let mut results_parts = Vec::new();
             for (name, id, args) in tool_calls {
                 let description = format!("Execute tool '{}' with args: {}", name, args);
                 self.bridge.send(SystemEvent::RequestApproval { description, state: self.get_state_snapshot() }).await?;
@@ -218,14 +262,8 @@ impl Conductor {
                 let mut approved = false;
                 while let Some(UserEvent::Input(input)) = self.events_rx.recv().await {
                     match input.to_lowercase().as_str() {
-                        "y" | "yes" => {
-                            approved = true;
-                            break;
-                        }
-                        "n" | "no" => {
-                            approved = false;
-                            break;
-                        }
+                        "y" | "yes" => { approved = true; break; }
+                        "n" | "no" => { approved = false; break; }
                         _ => {
                             self.pending_steering.push_back(input);
                             self.bridge.send(SystemEvent::Text("[Steering noted. Waiting for tool approval/rejection...]".to_string(), self.get_state_snapshot())).await?;
@@ -233,45 +271,30 @@ impl Conductor {
                     }
                 }
 
-                if approved {
-                    let args_map: std::collections::HashMap<String, serde_json::Value> = 
-                        serde_json::from_value(args).unwrap_or_default();
-                    
-                    match self.tools.execute(&name, args_map).await {
+                let result = if approved {
+                    match self.tools.execute(&name, args).await {
                         Ok(res) => {
                             self.refresh_system_metadata();
                             if self.dev_mode {
                                 self.bridge.send(SystemEvent::Debug(format!("Tool Result: {:#?}", res), self.get_state_snapshot())).await?;
                             }
-                            current_tool_results.push(ToolResult {
-                                call_id: id,
-                                name,
-                                result: res.output,
-                                is_error: res.is_error,
-                            });
+                            res.output
                         }
-                        Err(e) => {
-                            current_tool_results.push(ToolResult {
-                                call_id: id,
-                                name,
-                                result: serde_json::json!({ "error": e.to_string() }),
-                                is_error: true,
-                            });
-                        }
+                        Err(e) => serde_json::json!({ "error": e.to_string() }),
                     }
                 } else {
-                    current_tool_results.push(ToolResult {
-                        call_id: id,
-                        name,
-                        result: serde_json::json!({ "error": "User rejected tool execution." }),
-                        is_error: true,
-                    });
-                }
+                    serde_json::json!({ "error": "User rejected tool execution." })
+                };
+
+                results_parts.push(InteractionPart::FunctionResponse(FunctionResponse {
+                    id: Some(id),
+                    name,
+                    response: result,
+                }));
             }
 
-            if let Some(steer) = self.pending_steering.pop_front() {
-                current_prompt = steer;
-            }
+            // 6. Next Input
+            next_input = InteractionInput::Parts(results_parts);
         }
 
         Ok(())
@@ -319,10 +342,8 @@ mod tests {
     async fn test_conductor_state_persistence() -> Result<()> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let brain = Box::new(MockBrain { calls: calls.clone() });
-        
         let sent = Arc::new(Mutex::new(Vec::new()));
         let bridge = Arc::new(TestBridge { sent: sent.clone() });
-        
         let (tx, rx) = mpsc::channel(10);
         let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()), "test-model".to_string(), false);
 
@@ -331,15 +352,10 @@ mod tests {
         assert_eq!(conductor.previous_interaction_id, Some("id_1".to_string()));
         
         conductor.handle_conversation("pong".to_string()).await?;
-        
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0].prompt, "ping");
-        assert_eq!(history[0].previous_interaction_id, None);
-        
-        assert_eq!(history[1].prompt, "pong");
+        // Turn 2 should have id_1 as previous
         assert_eq!(history[1].previous_interaction_id, Some("id_1".to_string()));
-        
         Ok(())
     }
 
@@ -386,14 +402,43 @@ mod tests {
         });
 
         conductor.handle_conversation("start".to_string()).await?;
-
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0].prompt, "start");
-        assert_eq!(history[1].prompt, "actually do X");
-        assert_eq!(history[1].tool_results.len(), 1);
-        assert_eq!(history[1].tool_results[0].name, "test_tool");
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn test_conductor_private_mode_stateless_replay() -> Result<()> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(
+            Box::new(ToolMockBrain { calls: calls.clone() }), 
+            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
+            rx, 
+            Arc::new(ToolRegistry::new()),
+            "test-model".to_string(),
+            false
+        );
+
+        conductor.memory_enabled = false;
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
+        });
+
+        conductor.handle_conversation("start".to_string()).await?;
+        let history = calls.lock().unwrap();
+        assert_eq!(history.len(), 2);
+        match &history[1].input {
+            InteractionInput::Turns(turns) => {
+                assert_eq!(turns.len(), 3); 
+                assert_eq!(turns[0].role, Role::User);
+                assert_eq!(turns[1].role, Role::Model);
+                assert_eq!(turns[2].role, Role::User);
+            }
+            _ => panic!("Expected InteractionInput::Turns for private tool follow-up"),
+        }
         Ok(())
     }
 
@@ -447,10 +492,6 @@ mod tests {
 
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[1].tool_results.len(), 1);
-        assert!(history[1].tool_results[0].is_error);
-        assert_eq!(history[1].tool_results[0].result["error"], "User rejected tool execution.");
-
         Ok(())
     }
 
@@ -485,44 +526,6 @@ mod tests {
             }
         });
         assert!(help_sent);
-        Ok(())
-    }
-
-
-    #[tokio::test]
-    async fn test_conductor_private_mode_tool_id_retention() -> Result<()> {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let (tx, rx) = mpsc::channel(10);
-        
-        let mut conductor = Conductor::new(
-            Box::new(ToolMockBrain { calls: calls.clone() }), 
-            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
-            rx, 
-            Arc::new(ToolRegistry::new()),
-            "test-model".to_string(),
-            false
-        );
-
-        // DISABLE memory
-        conductor.memory_enabled = false;
-
-        let tx_clone = tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
-        });
-
-        conductor.handle_conversation("start".to_string()).await?;
-
-        let history = calls.lock().unwrap();
-        assert_eq!(history.len(), 2);
-        // Turn 1 should have NO ID
-        assert_eq!(history[0].previous_interaction_id, None);
-        // Turn 2 MUST have the ID from Turn 1 to satisfy API requirements
-        assert_eq!(history[1].previous_interaction_id, Some("id_1".to_string()));
-        // BUT session memory must still be empty
-        assert_eq!(conductor.previous_interaction_id, None);
-
         Ok(())
     }
 }

@@ -16,7 +16,7 @@ pub struct ToolResult {
 pub trait ToolExecutor: Send + Sync {
     fn name(&self) -> String;
     fn definition(&self) -> FunctionDeclaration;
-    async fn execute(&self, args: HashMap<String, Value>) -> Result<ToolResult>;
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>;
 }
 
 pub struct ToolRegistry {
@@ -42,7 +42,7 @@ impl ToolRegistry {
         }).collect()
     }
 
-    pub async fn execute(&self, name: &str, args: HashMap<String, Value>) -> Result<ToolResult> {
+    pub async fn execute(&self, name: &str, args: serde_json::Value) -> Result<ToolResult> {
         let tool = self.tools.get(name).ok_or_else(|| anyhow::anyhow!("Tool not found: {}", name))?;
         tool.execute(args).await
     }
