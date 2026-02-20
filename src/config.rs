@@ -5,6 +5,7 @@ use std::env;
 pub struct Config {
     pub gemini_api_key: String,
     pub gemini_model: String,
+    pub dev_mode: bool,
 }
 
 impl Config {
@@ -15,9 +16,14 @@ impl Config {
         let model = env::var("GEMINI_MODEL")
             .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
 
+        let dev_mode = env::var("DEV_MODE")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(true); // Default to true as requested
+
         Ok(Self {
             gemini_api_key: api_key,
             gemini_model: model,
+            dev_mode,
         })
     }
 }

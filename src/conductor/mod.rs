@@ -24,6 +24,7 @@ pub struct Conductor {
     streaming: bool,
     thinking_level: String,
     memory_enabled: bool,
+    dev_mode: bool,
     pwd: String,
     git_branch: String,
 }
@@ -35,6 +36,7 @@ impl Conductor {
         events_rx: mpsc::Receiver<UserEvent>,
         tools: Arc<ToolRegistry>,
         model: String,
+        dev_mode: bool,
     ) -> Self {
         let mut conductor = Self {
             brain,
@@ -47,6 +49,7 @@ impl Conductor {
             streaming: true,
             thinking_level: "high".to_string(),
             memory_enabled: true,
+            dev_mode,
             pwd: String::new(),
             git_branch: String::new(),
         };
@@ -78,6 +81,7 @@ impl Conductor {
             thinking_level: self.thinking_level.clone(),
             streaming: self.streaming,
             memory_enabled: self.memory_enabled,
+            dev_mode: self.dev_mode,
             pwd: self.pwd.clone(),
             git_branch: self.git_branch.clone(),
         }
@@ -152,7 +156,12 @@ impl Conductor {
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),
                 memory_enabled: self.memory_enabled,
+                dev_mode: self.dev_mode,
             };
+
+            if self.dev_mode {
+                self.bridge.send(SystemEvent::Debug(format!("TurnContext Sent: {:#?}", context), self.get_state_snapshot())).await?;
+            }
 
             current_prompt = String::new();
             current_tool_results = Vec::new();
@@ -161,7 +170,12 @@ impl Conductor {
             let mut tool_calls = Vec::new();
 
             while let Some(brain_res) = brain_stream.next().await {
-                match brain_res? {
+                let event = brain_res?;
+                if self.dev_mode {
+                    self.bridge.send(SystemEvent::Debug(format!("Brain Event: {:#?}", event), self.get_state_snapshot())).await?;
+                }
+
+                match event {
                     BrainEvent::TextDelta(text) => {
                         self.bridge.send(SystemEvent::Text(text, self.get_state_snapshot())).await?;
                     }
@@ -220,6 +234,9 @@ impl Conductor {
                     match self.tools.execute(&name, args_map).await {
                         Ok(res) => {
                             self.refresh_system_metadata();
+                            if self.dev_mode {
+                                self.bridge.send(SystemEvent::Debug(format!("Tool Result: {:#?}", res), self.get_state_snapshot())).await?;
+                            }
                             current_tool_results.push(ToolResult {
                                 call_id: id,
                                 name,
@@ -301,7 +318,7 @@ mod tests {
         let bridge = Arc::new(TestBridge { sent: sent.clone() });
         
         let (tx, rx) = mpsc::channel(10);
-        let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()), "test-model".to_string());
+        let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()), "test-model".to_string(), false);
 
         tx.send(UserEvent::Input("ping".to_string())).await?;
         conductor.handle_conversation("ping".to_string()).await?;
@@ -351,7 +368,8 @@ mod tests {
             Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
             rx, 
             Arc::new(ToolRegistry::new()),
-            "test-model".to_string()
+            "test-model".to_string(),
+            false
         );
 
         let tx_clone = tx.clone();
@@ -381,7 +399,8 @@ mod tests {
             Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
             rx, 
             Arc::new(ToolRegistry::new()),
-            "test-model".to_string()
+            "test-model".to_string(),
+            false
         );
 
         conductor.previous_interaction_id = Some("existing".to_string());
@@ -408,7 +427,8 @@ mod tests {
             Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
             rx, 
             Arc::new(ToolRegistry::new()),
-            "test-model".to_string()
+            "test-model".to_string(),
+            false
         );
 
         let tx_clone = tx.clone();
@@ -437,7 +457,8 @@ mod tests {
             Arc::new(TestBridge { sent: sent.clone() }), 
             rx, 
             Arc::new(ToolRegistry::new()),
-            "test-model".to_string()
+            "test-model".to_string(),
+            false
         );
 
         tx.send(UserEvent::Input("/".to_string())).await?;
@@ -452,10 +473,9 @@ mod tests {
 
         let sent_events = sent.lock().unwrap();
         let help_sent = sent_events.iter().any(|e| {
-            if let SystemEvent::Text(text, _) = e {
-                text.contains("Available Commands")
-            } else {
-                false
+            match e {
+                SystemEvent::Info(text, _) => text.contains("Available Commands"),
+                _ => false,
             }
         });
         assert!(help_sent);

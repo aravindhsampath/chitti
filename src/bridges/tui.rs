@@ -39,6 +39,7 @@ enum ChatMessage {
     System(String),
     Error(String),
     Tool(String),
+    Debug(String),
 }
 
 impl TuiBridge {
@@ -141,13 +142,14 @@ impl TuiBridge {
         // 1. Status Bar
         let status_bar = if let Some(ref s) = state.session_state {
             format!(
-                " Model: {} | Thinking: {} | Stream: {} | Memory: {} | PWD: {} | Branch: {} ",
+                " Model: {} | Thinking: {} | Stream: {} | Memory: {} | PWD: {} | Branch: {} | DEV: {} ",
                 s.model,
                 s.thinking_level,
                 if s.streaming { "ON" } else { "OFF" },
                 if s.memory_enabled { "ON" } else { "OFF" },
                 s.pwd,
-                s.git_branch
+                s.git_branch,
+                if s.dev_mode { "ON" } else { "OFF" }
             )
         } else {
             " Initializing Chitti... ".to_string()
@@ -166,8 +168,8 @@ impl TuiBridge {
                 ChatMessage::System(t) => (format!("System: {}", t), Style::default().fg(Color::Yellow)),
                 ChatMessage::Error(t) => (format!("Error: {}", t), Style::default().fg(Color::Red)),
                 ChatMessage::Tool(t) => (format!("Tool: {}", t), Style::default().fg(Color::Blue).add_modifier(Modifier::ITALIC)),
+                ChatMessage::Debug(t) => (format!("DEBUG: {}", t), Style::default().fg(Color::Magenta).add_modifier(Modifier::DIM)),
             };
-            // Use Paragraph inside ListItem is fine, but we need to return it as something that implements Into<Text>
             ListItem::new(content).style(style)
         }).collect();
 
@@ -176,7 +178,6 @@ impl TuiBridge {
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
         
-        // Auto-scroll logic: if not manually scrolling, keep at bottom
         if state.scroll_state.selected().is_none() && !state.messages.is_empty() {
             let last_idx = state.messages.len().saturating_sub(1);
             state.scroll_state.select(Some(last_idx));
@@ -190,7 +191,6 @@ impl TuiBridge {
             .block(Block::default().borders(Borders::ALL).title(" Input (Esc to exit) "));
         f.render_widget(input_widget, chunks[2]);
         
-        // Set cursor position for input
         f.set_cursor_position((
             chunks[2].x + state.input.len() as u16 + 1,
             chunks[2].y + 1,
@@ -203,13 +203,13 @@ impl CommBridge for TuiBridge {
     async fn send(&self, event: SystemEvent) -> Result<()> {
         let mut state = self.shared_state.lock().unwrap();
         
-        // Sync SessionState
         match &event {
             SystemEvent::Text(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::Thought(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::Info(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::ToolCall { state: s, .. } => state.session_state = Some(s.clone()),
             SystemEvent::Error(_, s) => state.session_state = Some(s.clone()),
+            SystemEvent::Debug(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::RequestApproval { state: s, .. } => state.session_state = Some(s.clone()),
             SystemEvent::Ready(s) => state.session_state = Some(s.clone()),
         }
@@ -249,17 +249,19 @@ impl CommBridge for TuiBridge {
             SystemEvent::Error(err, _) => {
                 state.messages.push(ChatMessage::Error(err));
             }
-            SystemEvent::RequestApproval { description, .. } => {
-                state.messages.push(ChatMessage::System(format!("APPROVAL REQUIRED: {}", description)));
-                state.messages.push(ChatMessage::System("Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string()));
+            SystemEvent::Debug(text, _) => {
+                state.messages.push(ChatMessage::Debug(text));
             }
             SystemEvent::Info(text, _) => {
                 state.messages.push(ChatMessage::System(text));
             }
+            SystemEvent::RequestApproval { description, .. } => {
+                state.messages.push(ChatMessage::System(format!("APPROVAL REQUIRED: {}", description)));
+                state.messages.push(ChatMessage::System("Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string()));
+            }
             SystemEvent::Ready(_) => {}
         }
         
-        // Ensure scroll follows new content if we were at the bottom
         if !state.messages.is_empty() {
             let last_idx = state.messages.len().saturating_sub(1);
             state.scroll_state.select(Some(last_idx));

@@ -15,6 +15,7 @@ pub enum SystemEvent {
     Info(String, SessionState),
     ToolCall { name: String, args: Value, state: SessionState },
     Error(String, SessionState),
+    Debug(String, SessionState),
     RequestApproval { description: String, state: SessionState },
     Ready(SessionState),
 }
@@ -23,6 +24,7 @@ pub enum SystemEvent {
 pub struct SessionState {
     pub model: String,
     pub thinking_level: String,
+    pub dev_mode: bool,
     pub streaming: bool,
     pub memory_enabled: bool,
     pub pwd: String,
@@ -47,6 +49,7 @@ pub struct TurnContext {
     pub streaming: bool,
     pub memory_enabled: bool,
     pub thinking_level: String,
+    pub dev_mode: bool,
 }
 
 #[derive(Debug, Clone)]
