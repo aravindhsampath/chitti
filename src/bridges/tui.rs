@@ -21,10 +21,11 @@ impl TuiBridge {
         let state_lock = self.state.lock().unwrap();
         if let Some(ref state) = *state_lock {
             println!(
-                "\x1b[1;30;47m Model: {} | Thinking: {} | Stream: {} | PWD: {} | Branch: {} \x1b[0m",
+                "\x1b[1;30;47m Model: {} | Thinking: {} | Stream: {} | Memory: {} | PWD: {} | Branch: {} \x1b[0m",
                 state.model,
                 state.thinking_level,
                 if state.streaming { "ON" } else { "OFF" },
+                if state.memory_enabled { "ON" } else { "OFF" },
                 state.pwd,
                 state.git_branch
             );

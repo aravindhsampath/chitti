@@ -23,6 +23,7 @@ pub struct Conductor {
     model: String,
     streaming: bool,
     thinking_level: String,
+    memory_enabled: bool,
     pwd: String,
     git_branch: String,
 }
@@ -45,6 +46,7 @@ impl Conductor {
             model,
             streaming: true,
             thinking_level: "high".to_string(),
+            memory_enabled: true,
             pwd: String::new(),
             git_branch: String::new(),
         };
@@ -75,6 +77,7 @@ impl Conductor {
             model: self.model.clone(),
             thinking_level: self.thinking_level.clone(),
             streaming: self.streaming,
+            memory_enabled: self.memory_enabled,
             pwd: self.pwd.clone(),
             git_branch: self.git_branch.clone(),
         }
@@ -98,6 +101,13 @@ impl Conductor {
                         self.thinking_level = parts[1].to_string();
                         self.bridge.send(SystemEvent::Text(format!("Thinking level set to {}", self.thinking_level), self.get_state_snapshot())).await?;
                     }
+                    "/memory" => {
+                        self.memory_enabled = !self.memory_enabled;
+                        if !self.memory_enabled {
+                            self.previous_interaction_id = None;
+                        }
+                        self.bridge.send(SystemEvent::Text(format!("Session memory is now {}", if self.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                    }
                     _ => {
                         self.bridge.send(SystemEvent::Error(format!("Unknown command: {}", parts[0]), self.get_state_snapshot())).await?;
                     }
@@ -106,9 +116,6 @@ impl Conductor {
                 if let Err(e) = self.handle_conversation(input).await {
                     tracing::error!("Conversation error: {:?}", e);
                     let _ = self.bridge.send(SystemEvent::Error(format!("Conversation Error: {:?}", e), self.get_state_snapshot())).await;
-                    
-                    // CRITICAL: On any API/Conversation error, we should probably reset the interaction ID
-                    // because the current one is likely invalid for the next attempt.
                     self.previous_interaction_id = None;
                 }
             }
@@ -121,7 +128,6 @@ impl Conductor {
         let mut current_tool_results = Vec::new();
 
         loop {
-            // Process any buffered steering
             while let Some(steer) = self.pending_steering.pop_front() {
                 if !current_prompt.is_empty() {
                     current_prompt.push_str("\n");
@@ -131,10 +137,11 @@ impl Conductor {
 
             let context = TurnContext {
                 prompt: current_prompt.clone(),
-                previous_interaction_id: self.previous_interaction_id.clone(),
+                previous_interaction_id: if self.memory_enabled { self.previous_interaction_id.clone() } else { None },
                 tool_results: current_tool_results,
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),
+                memory_enabled: self.memory_enabled,
             };
 
             current_prompt = String::new();
@@ -156,8 +163,10 @@ impl Conductor {
                     }
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
-                            tracing::debug!(interaction_id = %id, "Turn completed, updated interaction ID");
-                            self.previous_interaction_id = Some(id);
+                            if self.memory_enabled {
+                                tracing::debug!(interaction_id = %id, "Turn completed, updated interaction ID");
+                                self.previous_interaction_id = Some(id);
+                            }
                         }
                     }
                     BrainEvent::Error(err) => {
@@ -171,7 +180,6 @@ impl Conductor {
                 break;
             }
 
-            // GATING: Ask for approval for all tool calls in this turn
             for (name, id, args) in tool_calls {
                 let description = format!("Execute tool '{}' with args: {}", name, args);
                 self.bridge.send(SystemEvent::RequestApproval { description, state: self.get_state_snapshot() }).await?;
@@ -200,9 +208,7 @@ impl Conductor {
                     
                     match self.tools.execute(&name, args_map).await {
                         Ok(res) => {
-                            // Refresh metadata after tool execution
                             self.refresh_system_metadata();
-                            
                             current_tool_results.push(ToolResult {
                                 call_id: id,
                                 name,
@@ -286,12 +292,10 @@ mod tests {
         let (tx, rx) = mpsc::channel(10);
         let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()), "test-model".to_string());
 
-        // Turn 1
         tx.send(UserEvent::Input("ping".to_string())).await?;
         conductor.handle_conversation("ping".to_string()).await?;
         assert_eq!(conductor.previous_interaction_id, Some("id_1".to_string()));
         
-        // Turn 2
         conductor.handle_conversation("pong".to_string()).await?;
         
         let history = calls.lock().unwrap();
@@ -339,14 +343,10 @@ mod tests {
             "test-model".to_string()
         );
 
-        // Start turn
         let tx_clone = tx.clone();
         tokio::spawn(async move {
-            // Wait for tool approval request
             tokio::time::sleep(Duration::from_millis(50)).await;
-            // Send steering
             tx_clone.send(UserEvent::Input("actually do X".to_string())).await.unwrap();
-            // Send approval
             tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
         });
 
@@ -355,8 +355,6 @@ mod tests {
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].prompt, "start");
-        
-        // Turn 2 should contain the steering text
         assert_eq!(history[1].prompt, "actually do X");
         assert_eq!(history[1].tool_results.len(), 1);
         assert_eq!(history[1].tool_results[0].name, "test_tool");
@@ -376,11 +374,8 @@ mod tests {
         );
 
         conductor.previous_interaction_id = Some("existing".to_string());
-        
-        // Simulate /clear command
         tx.send(UserEvent::Input("/clear".to_string())).await?;
         
-        // Run the main loop for a bit
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -408,7 +403,6 @@ mod tests {
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            // REJECT the tool
             tx_clone.send(UserEvent::Input("n".to_string())).await.unwrap();
         });
 
@@ -416,7 +410,6 @@ mod tests {
 
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
-        // Turn 2 should contain an error result for the tool
         assert_eq!(history[1].tool_results.len(), 1);
         assert!(history[1].tool_results[0].is_error);
         assert_eq!(history[1].tool_results[0].result["error"], "User rejected tool execution.");

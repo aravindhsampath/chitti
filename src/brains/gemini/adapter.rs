@@ -41,6 +41,7 @@ impl BrainEngine for GeminiEngine {
         };
 
         let mut builder = self.client.interaction(input)
+            .store(context.memory_enabled)
             .thinking_level(match context.thinking_level.to_lowercase().as_str() {
                 "minimal" => crate::brains::gemini::types::ThinkingLevel::Minimal,
                 "low" => crate::brains::gemini::types::ThinkingLevel::Low,

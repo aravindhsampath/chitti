@@ -5,6 +5,7 @@ use serde::Serialize;
 #[allow(dead_code)]
 pub enum UserEvent {
     Input(String),
+    ToggleMemory,
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,7 @@ pub struct SessionState {
     pub model: String,
     pub thinking_level: String,
     pub streaming: bool,
+    pub memory_enabled: bool,
     pub pwd: String,
     pub git_branch: String,
 }
@@ -41,6 +43,7 @@ pub struct TurnContext {
     pub previous_interaction_id: Option<String>,
     pub tool_results: Vec<ToolResult>,
     pub streaming: bool,
+    pub memory_enabled: bool,
     pub thinking_level: String,
 }
 
