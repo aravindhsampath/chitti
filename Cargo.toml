@@ -20,6 +20,8 @@ tokio-util = { version = "0.7.18", default-features = false, features = ["codec"
 uuid = { version = "1.21.0", features = ["v4"] }
 http = "1.4.0"
 async-trait = "0.1.89"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
 
 [dev-dependencies]
 mockito = "1.7.2"

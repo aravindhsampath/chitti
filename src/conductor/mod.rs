@@ -108,6 +108,16 @@ impl Conductor {
                         }
                         self.bridge.send(SystemEvent::Text(format!("Session memory is now {}", if self.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
                     }
+                    "/help" | "/" => {
+                        let help_text = "\nAvailable Commands:\n\
+                              /stream          - Toggle real-time streaming\n\
+                              /thinking <lvl>  - Set thinking level (minimal, low, medium, high)\n\
+                              /memory          - Toggle session memory (privacy mode)\n\
+                              /clear           - Clear conversation context\n\
+                              /exit | /quit    - Exit Chitti\n\
+                              /help | /        - Show this help menu\n";
+                        self.bridge.send(SystemEvent::Text(help_text.to_string(), self.get_state_snapshot())).await?;
+                    }
                     _ => {
                         self.bridge.send(SystemEvent::Error(format!("Unknown command: {}", parts[0]), self.get_state_snapshot())).await?;
                     }
@@ -159,6 +169,7 @@ impl Conductor {
                         self.bridge.send(SystemEvent::Text(format!("\x1b[2m{}\x1b[0m", thought), self.get_state_snapshot())).await?;
                     }
                     BrainEvent::ToolCall { name, id, args } => {
+                        self.bridge.send(SystemEvent::ToolCall { name: name.clone(), args: args.clone(), state: self.get_state_snapshot() }).await?;
                         tool_calls.push((name, id, args));
                     }
                     BrainEvent::Complete { interaction_id } => {
@@ -176,7 +187,7 @@ impl Conductor {
             }
 
             if tool_calls.is_empty() {
-                self.bridge.send(SystemEvent::Text("\n".to_string(), self.get_state_snapshot())).await?;
+                self.bridge.send(SystemEvent::Ready(self.get_state_snapshot())).await?;
                 break;
             }
 
@@ -414,6 +425,40 @@ mod tests {
         assert!(history[1].tool_results[0].is_error);
         assert_eq!(history[1].tool_results[0].result["error"], "User rejected tool execution.");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_conductor_help_command() -> Result<()> {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel(10);
+        let mut conductor = Conductor::new(
+            Box::new(MockBrain { calls: Arc::new(Mutex::new(Vec::new())) }), 
+            Arc::new(TestBridge { sent: sent.clone() }), 
+            rx, 
+            Arc::new(ToolRegistry::new()),
+            "test-model".to_string()
+        );
+
+        tx.send(UserEvent::Input("/".to_string())).await?;
+        
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx_clone.send(UserEvent::Input("/exit".to_string())).await.unwrap();
+        });
+
+        conductor.run().await?;
+
+        let sent_events = sent.lock().unwrap();
+        let help_sent = sent_events.iter().any(|e| {
+            if let SystemEvent::Text(text, _) = e {
+                text.contains("Available Commands")
+            } else {
+                false
+            }
+        });
+        assert!(help_sent);
         Ok(())
     }
 }

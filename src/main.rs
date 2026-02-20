@@ -53,15 +53,15 @@ async fn main() -> Result<()> {
         conductor.get_state_snapshot()
     )).await?;
 
-    // Spawn TUI input loop
-    let tui_handle = bridge.clone();
+    // Spawn Conductor
     tokio::spawn(async move {
-        if let Err(e) = tui_handle.run_input_loop().await {
-            tracing::error!("TUI input loop error: {:?}", e);
+        if let Err(e) = conductor.run().await {
+            tracing::error!("Conductor error: {:?}", e);
         }
     });
 
-    conductor.run().await?;
+    // Start UI loop (this will block until exit)
+    bridge.run_ui_loop().await?;
 
     Ok(())
 }

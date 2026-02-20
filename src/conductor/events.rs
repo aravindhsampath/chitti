@@ -8,13 +8,13 @@ pub enum UserEvent {
     ToggleMemory,
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize)]
 pub enum SystemEvent {
     Text(String, SessionState),
     ToolCall { name: String, args: Value, state: SessionState },
     Error(String, SessionState),
     RequestApproval { description: String, state: SessionState },
+    Ready(SessionState),
 }
 
 #[derive(Debug, Clone, Serialize)]
