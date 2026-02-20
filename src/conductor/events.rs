@@ -25,8 +25,8 @@ pub enum BrainEvent {
     TextDelta(String),
     ThoughtDelta(String),
     ToolCall { name: String, id: String, args: Value },
+    Complete { interaction_id: Option<String> },
     Error(String),
-    Complete,
 }
 
 #[derive(Debug, Clone)]

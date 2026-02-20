@@ -74,10 +74,13 @@ impl BrainEngine for GeminiEngine {
                                         args: serde_json::to_value(fc.args).unwrap_or_default() 
                                     })
                                 }
-                                _ => Ok(BrainEvent::Complete),
+                                _ => Ok(BrainEvent::Complete { interaction_id: None }),
                             }
                         }
-                        _ => Ok(BrainEvent::Complete),
+                        crate::brains::gemini::types::InteractionEvent::InteractionComplete { interaction } => {
+                            Ok(BrainEvent::Complete { interaction_id: interaction.id })
+                        }
+                        _ => Ok(BrainEvent::Complete { interaction_id: None }),
                     }
                 }
                 Err(e) => Err(anyhow::anyhow!("Gemini stream error: {:?}", e)),

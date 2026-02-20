@@ -95,7 +95,11 @@ impl Conductor {
                     BrainEvent::ToolCall { name, id, args } => {
                         tool_calls.push((name, id, args));
                     }
-                    BrainEvent::Complete => {}
+                    BrainEvent::Complete { interaction_id } => {
+                        if let Some(id) = interaction_id {
+                            self.previous_interaction_id = Some(id);
+                        }
+                    }
                     BrainEvent::Error(err) => {
                         self.bridge.send(SystemEvent::Error(err)).await?;
                     }
