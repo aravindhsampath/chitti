@@ -25,12 +25,14 @@ impl Client {
     }
 
     /// Sets a custom model for the client.
+    #[allow(dead_code)]
     pub fn with_model(mut self, model: String) -> Self {
         self.model = model;
         self
     }
 
     /// Sets a custom base URL (useful for testing/mocking).
+    #[allow(dead_code)]
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
         self
@@ -66,6 +68,7 @@ pub struct RequestBuilder {
 }
 
 impl RequestBuilder {
+    #[allow(dead_code)]
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
         reqwest::header::HeaderName: TryFrom<K>,
@@ -77,6 +80,7 @@ impl RequestBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn query<T: serde::Serialize + ?Sized>(mut self, query: &T) -> Self {
         self.inner = self.inner.query(query);
         self
@@ -87,6 +91,7 @@ impl RequestBuilder {
         self
     }
     
+    #[allow(dead_code)]
     pub fn body<T: Into<reqwest::Body>>(mut self, body: T) -> Self {
         self.inner = self.inner.body(body);
         self

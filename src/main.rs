@@ -14,6 +14,8 @@ mod tools;
 use brains::gemini::adapter::GeminiEngine;
 use bridges::tui::TuiBridge;
 use conductor::Conductor;
+use tools::ToolRegistry;
+use tools::bash::BashTool;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,15 +31,20 @@ async fn main() -> Result<()> {
     let config = config::Config::from_env().context("Failed to load configuration")?;
     info!("Chitti initialized with model: {}", config.gemini_model);
 
-    // 3. Initialize Components
+    // 3. Initialize Tool Registry
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(BashTool));
+    let tools = Arc::new(registry);
+
+    // 4. Initialize Components
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model);
-    let brain = Box::new(GeminiEngine::new(client));
+    let brain = Box::new(GeminiEngine::new(client, tools.clone()));
     
     let (tui, rx) = TuiBridge::new();
     let bridge = Arc::new(tui);
 
-    // 4. Start the Conductor
-    let mut conductor = Conductor::new(brain, bridge.clone(), rx);
+    // 5. Start the Conductor
+    let mut conductor = Conductor::new(brain, bridge.clone(), rx, tools.clone());
     
     // Spawn TUI input loop
     let tui_handle = bridge.clone();

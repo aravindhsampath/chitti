@@ -16,6 +16,7 @@ pub enum GeminiError {
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Stream Error: {0}")]
+    #[allow(dead_code)]
     Stream(String),
     #[error("Codec Error: {0}")]
     Codec(#[from] LinesCodecError),

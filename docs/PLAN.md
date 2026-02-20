@@ -6,41 +6,49 @@ Chitti is a lean, resilient personal assistant daemon for macOS, written in Rust
 ## Core Principles
 - **Minimal Abstraction**: Keep the codebase linear and easy to follow.
 - **Resilience**: The daemon must handle API failures, network issues, and invalid inputs without crashing.
-- **Observability**: Comprehensive logging for debugging and monitoring.
+- **Observability**: Comprehensive logging for debugging and monitoring using `tracing`.
 - **Lean Implementation**: Minimal dependencies, focusing on standard Rust patterns.
+- **Decoupled Architecture**: Omni-channel and Omni-AI-provider ready.
 
 ## Architecture
-1. **Daemon Core**: A long-running process that manages the interaction loop and system state.
-2. **Communication Layer**:
-   - Initial: Terminal-based prompt (REPL).
-   - Future: Pluggable channels (e.g., Raycast, WhatsApp, or macOS Menu Bar).
-3. **LLM Engine**: Integration with Google's Gemini-3 API.
-4. **Configuration**: Environment-based (.env) for API keys and model selection.
+1.  **Conductor (State Machine)**: The central orchestrator that manages the interaction lifecycle, tool execution, and user steering.
+2.  **CommBridge (Frontend)**: Abstract interface for communication channels.
+    -   `TuiBridge`: Current terminal implementation.
+    -   `WhatsAppBridge`, `SlackBridge`: Planned future channels.
+3.  **BrainEngine (AI Engine)**: Abstract interface for AI providers.
+    -   `GeminiEngine`: Proven implementation using the Gemini Interactions API.
+4.  **ToolRegistry**: Manages local capabilities (e.g., `BashTool`).
 
 ## Roadmap
-### Phase 1: Foundation (Current)
-- [ ] Initialize Rust project with `tracing` for logging.
-- [ ] Implement `.env` loading and validation.
-- [ ] Create a resilient error-handling framework.
-- [ ] Build the core daemon loop.
 
-### Phase 2: Gemini Integration
-- [ ] Implement a minimalist Gemini API client using `reqwest`.
-- [ ] Support streaming and non-streaming responses.
-- [ ] Handle rate limiting and transient network errors.
+### Phase 1: Foundation (Completed)
+- [x] Initialize Rust project with `tracing` for logging.
+- [x] Implement `.env` loading and validation.
+- [x] Create a resilient error-handling framework (`GeminiError`).
+- [x] Implement Gemini Interactions API with streaming and state.
 
-### Phase 3: Interaction (Terminal)
-- [ ] Build a robust CLI interface for the terminal.
-- [ ] Support basic commands (e.g., /exit, /clear).
+### Phase 2: Omni-Channel Refactor (Completed)
+- [x] Decouple Main loop into the `Conductor`.
+- [x] Define `CommBridge` and `BrainEngine` traits.
+- [x] Migrate TUI logic to `TuiBridge`.
+- [x] Implement `BashTool` for local command execution.
+- [x] Add **Manual Approval Gate** for tool execution.
+- [x] Implement **Steering Support** during turn boundaries.
 
-### Phase 4: Expansion (Future)
-- [ ] Persistent conversation history.
-- [ ] Tool/Plugin system (e.g., calendar, file system).
-- [ ] Transition to a true background daemon (launchd).
+### Phase 3: Polish & Expansion (Current)
+- [x] Demonstration of channel-agnosticism via `MockBridge`.
+- [ ] Implement persistent conversation history.
+- [ ] Add more local tools (e.g., File Editor, Browser Automation).
+- [ ] Implement Raycast or WhatsApp bridge.
+
+### Phase 4: Production Daemon
+- [ ] Transition to a true background daemon (`launchd`).
+- [ ] Implement secure credential storage (macOS Keychain).
 
 ## Tech Stack
 - **Language**: Rust
 - **HTTP Client**: `reqwest` (with `tokio` for async)
 - **Logging**: `tracing` + `tracing-subscriber`
 - **Config**: `dotenvy`
-- **Serialization**: `serde`
+- **Serialization**: `serde` + `serde_json`
+- **Async Utility**: `futures-util`, `async-trait`, `tokio-util`

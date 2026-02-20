@@ -23,22 +23,34 @@ impl TuiBridge {
             let prompt = user_input.trim();
             if prompt.is_empty() { continue; }
 
-            if prompt.starts_with('/') {
-                let parts: Vec<&str> = prompt.split_whitespace().collect();
-                match parts[0] {
-                    "/exit" | "/quit" => {
-                        self.tx.send(UserEvent::Command("/exit".to_string())).await?;
-                        break;
-                    }
-                    "/clear" => {
-                        self.tx.send(UserEvent::Command("/clear".to_string())).await?;
-                    }
-                    _ => {
-                        self.tx.send(UserEvent::Command(prompt.to_string())).await?;
+            match prompt.to_lowercase().as_str() {
+                "y" | "yes" => {
+                    self.tx.send(UserEvent::Approve).await?;
+                }
+                "n" | "no" => {
+                    self.tx.send(UserEvent::Reject).await?;
+                }
+                _ if prompt.starts_with('/') => {
+                    let parts: Vec<&str> = prompt.split_whitespace().collect();
+                    match parts[0] {
+                        "/exit" | "/quit" => {
+                            self.tx.send(UserEvent::Command("/exit".to_string())).await?;
+                            break;
+                        }
+                        "/clear" => {
+                            self.tx.send(UserEvent::Command("/clear".to_string())).await?;
+                        }
+                        _ => {
+                            self.tx.send(UserEvent::Command(prompt.to_string())).await?;
+                        }
                     }
                 }
-            } else {
-                self.tx.send(UserEvent::Message(prompt.to_string())).await?;
+                _ => {
+                    // We treat normal messages as either Message or Steer 
+                    // depending on Conductor state, but TuiBridge just sends Message.
+                    // Conductor will decide how to handle it.
+                    self.tx.send(UserEvent::Message(prompt.to_string())).await?;
+                }
             }
         }
         Ok(())
@@ -55,13 +67,14 @@ impl CommBridge for TuiBridge {
                 stdout.flush()?;
             }
             SystemEvent::ToolCall { name, args } => {
-                println!("\n[Chitti calling tool: {} with args: {}]", name, args);
+                // Dimmed output for tool calls
+                println!("\x1b[34m\n[Chitti calling tool: {} with args: {}]\x1b[0m", name, args);
             }
             SystemEvent::Error(err) => {
-                eprintln!("\n[Error: {}]", err);
+                eprintln!("\x1b[31m\n[Error: {}]\x1b[31m", err);
             }
             SystemEvent::RequestApproval { description } => {
-                print!("\n[Approval required: {}] (y/n): ", description);
+                print!("\n\x1b[33m[Approval required: {}]\x1b[0m\nConfirm? (y/n): ", description);
                 stdout.flush()?;
             }
         }

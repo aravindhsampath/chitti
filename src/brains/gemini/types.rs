@@ -279,6 +279,7 @@ pub enum InteractionOutput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct ContentStartInfo {
     #[serde(rename = "type")]
     pub content_type: String,

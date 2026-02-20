@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use futures_util::{stream::BoxStream, StreamExt};
 use anyhow::Result;
+use std::sync::Arc;
+use crate::tools::ToolRegistry;
 use crate::brains::BrainEngine;
 use crate::brains::gemini::Client;
 use crate::brains::gemini::types::{InteractionInput, InteractionPart, FunctionResponse};
@@ -8,11 +10,12 @@ use crate::conductor::events::{BrainEvent, TurnContext};
 
 pub struct GeminiEngine {
     client: Client,
+    tools: Arc<ToolRegistry>,
 }
 
 impl GeminiEngine {
-    pub fn new(client: Client) -> Self {
-        Self { client }
+    pub fn new(client: Client, tools: Arc<ToolRegistry>) -> Self {
+        Self { client, tools }
     }
 }
 
@@ -37,10 +40,15 @@ impl BrainEngine for GeminiEngine {
             InteractionInput::Parts(parts)
         };
 
-        // Use the interaction method from the Client
         let mut builder = self.client.interaction(input);
         if let Some(id) = context.previous_interaction_id {
             builder = builder.previous_interaction_id(id);
+        }
+
+        // Add tool definitions
+        let tool_defs = self.tools.get_definitions();
+        if !tool_defs.is_empty() {
+            builder = builder.tools(tool_defs);
         }
 
         let stream = builder.stream().await?;

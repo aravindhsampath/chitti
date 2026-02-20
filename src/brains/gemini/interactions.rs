@@ -1,13 +1,12 @@
 use crate::brains::gemini::client::Client;
-use tracing::debug;
 use crate::brains::gemini::error::GeminiError;
 use crate::brains::gemini::types::*;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use reqwest::{Method, Response};
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
-use tracing::warn;
-use tracing::instrument;
+#[allow(unused_imports)]
+use tracing::{warn, instrument, debug};
 
 /// A builder for creating interaction requests.
 pub struct InteractionRequestBuilder<'a> {
@@ -38,22 +37,26 @@ impl<'a> InteractionRequestBuilder<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn model(mut self, model: String) -> Self {
         self.request.model = Some(model);
         self
     }
 
+    #[allow(dead_code)]
     pub fn cached_content(mut self, name: String) -> Self {
         self.request.cached_content = Some(name);
         self
     }
 
+    #[allow(dead_code)]
     pub fn agent(mut self, agent: String) -> Self {
         self.request.agent = Some(agent);
         self.request.model = None; // Model and agent are mutually exclusive in API
         self
     }
 
+    #[allow(dead_code)]
     pub fn system_instruction(mut self, instruction: InteractionContent) -> Self {
         self.request.system_instruction = Some(instruction);
         self
@@ -70,16 +73,19 @@ impl<'a> InteractionRequestBuilder<'a> {
     }
 
 
+    #[allow(dead_code)]
     pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
         self.request.tool_choice = Some(choice);
         self
     }
 
+    #[allow(dead_code)]
     pub fn generation_config(mut self, config: GenerationConfig) -> Self {
         self.request.generation_config = Some(config);
         self
     }
 
+    #[allow(dead_code)]
     pub fn thinking_level(mut self, level: ThinkingLevel) -> Self {
         let mut config = self.request.generation_config.take().unwrap_or_default();
         config.thinking_level = Some(level);
@@ -87,12 +93,14 @@ impl<'a> InteractionRequestBuilder<'a> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn store(mut self, store: bool) -> Self {
         self.request.store = Some(store);
         self
     }
 
     /// Sends the interaction request and returns the full response.
+    #[allow(dead_code)]
     #[instrument(skip(self), fields(model = ?self.request.model))]
     pub async fn send(self) -> Result<InteractionResponse, GeminiError> {
         let response = self.client

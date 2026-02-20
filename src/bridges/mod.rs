@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::conductor::events::SystemEvent;
 
 pub mod tui;
+pub mod mock;
 
 #[async_trait]
 pub trait CommBridge: Send + Sync {

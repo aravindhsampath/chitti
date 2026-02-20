@@ -7,6 +7,7 @@ use crate::brains::gemini::error::{GeminiError, Result};
 impl Client {
     /// Creates a batch for processing multiple requests.
     #[instrument(skip(self), fields(model = %self.model))]
+    #[allow(dead_code)]
     pub async fn create_batch(&self, display_name: String, file_name: String) -> Result<Operation> {
         let path = format!("/v1beta/models/{}:batchGenerateContent", self.model);
         let request = BatchRequest {
@@ -41,6 +42,7 @@ impl Client {
 
     /// Gets the status of a batch operation.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn get_batch_operation(&self, name: &str) -> Result<Operation> {
         let path = if name.starts_with("batches/") {
             format!("/v1beta/{}", name)

@@ -7,6 +7,7 @@ use crate::brains::gemini::error::{GeminiError, Result};
 impl Client {
     /// Uploads a file to the Gemini File API.
     #[instrument(skip(self, path))]
+    #[allow(dead_code)]
     pub async fn upload_file<P: AsRef<Path>>(&self, path: P, display_name: Option<String>) -> Result<File> {
         let path = path.as_ref();
         let file_name = path.file_name()
@@ -74,6 +75,7 @@ impl Client {
     }
     /// Gets metadata for a file.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn get_file(&self, name: &str) -> Result<File> {
         let path = if name.starts_with("files/") {
             format!("/v1beta/{}", name)
@@ -94,6 +96,7 @@ impl Client {
     }
     /// Lists files owned by the project.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn list_files(&self, page_size: Option<u32>, page_token: Option<String>) -> Result<ListFilesResponse> {
         let mut query = vec![];
         if let Some(ps) = page_size {
@@ -117,6 +120,7 @@ impl Client {
     }
     /// Deletes a file.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn delete_file(&self, name: &str) -> Result<()> {
         let path = if name.starts_with("files/") {
             format!("/v1beta/{}", name)

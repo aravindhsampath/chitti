@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum UserEvent {
     Message(String),
     Command(String), // e.g. "/exit", "/clear"
@@ -10,6 +11,7 @@ pub enum UserEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SystemEvent {
     Text(String),
     ToolCall { name: String, args: Value },
@@ -18,6 +20,7 @@ pub enum SystemEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum BrainEvent {
     TextDelta(String),
     ThoughtDelta(String),
@@ -34,6 +37,7 @@ pub struct TurnContext {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ToolResult {
     pub call_id: String,
     pub name: String,

@@ -7,6 +7,7 @@ use crate::brains::gemini::error::{GeminiError, Result};
 impl Client {
     /// Creates a new cached content resource.
     #[instrument(skip(self, cached_content), fields(model = %self.model))]
+    #[allow(dead_code)]
     pub async fn create_cached_content(&self, cached_content: CachedContent) -> Result<CachedContent> {
         let response = self.request(Method::POST, "/v1beta/cachedContents")
             .json(&cached_content)
@@ -35,6 +36,7 @@ impl Client {
 
     /// Gets metadata for a cached content.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn get_cached_content(&self, name: &str) -> Result<CachedContent> {
         let path = if name.starts_with("cachedContents/") {
             format!("/v1beta/{}", name)
@@ -68,6 +70,7 @@ impl Client {
 
     /// Deletes a cached content.
     #[instrument(skip(self))]
+    #[allow(dead_code)]
     pub async fn delete_cached_content(&self, name: &str) -> Result<()> {
         let path = if name.starts_with("cachedContents/") {
             format!("/v1beta/{}", name)
