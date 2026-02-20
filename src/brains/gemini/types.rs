@@ -55,6 +55,12 @@ pub struct FileData {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InteractionPart {
     Text { text: String },
+    Thought {
+        #[serde(default)]
+        signature: String,
+        #[serde(skip_serializing_if = "String::is_empty", default)]
+        summary: String,
+    },
     Image(MediaPart),
     Audio(MediaPart),
     Video(MediaPart),
@@ -65,11 +71,19 @@ pub enum InteractionPart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct InteractionContent {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<Role>,
-    pub parts: Vec<InteractionPart>,
+#[serde(transparent)]
+pub struct InteractionContent(pub Vec<InteractionPart>);
+
+impl From<String> for InteractionContent {
+    fn from(text: String) -> Self {
+        Self(vec![InteractionPart::Text { text }])
+    }
+}
+
+impl From<Vec<InteractionPart>> for InteractionContent {
+    fn from(parts: Vec<InteractionPart>) -> Self {
+        Self(parts)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +249,7 @@ pub struct InteractionResponse {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+/// An output from an interaction.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -279,12 +294,12 @@ pub enum InteractionOutput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct ContentStartInfo {
     #[serde(rename = "type")]
     pub content_type: String,
 }
 
+/// Events yielded during a streaming interaction.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
@@ -306,6 +321,7 @@ pub enum InteractionEvent {
     Other,
 }
 
+/// Structured API error.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
@@ -314,6 +330,7 @@ pub struct ApiError {
     pub message: String,
 }
 
+/// Safety setting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
@@ -322,6 +339,7 @@ pub struct SafetySetting {
     pub threshold: SafetyThreshold,
 }
 
+/// Safety categories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -333,6 +351,7 @@ pub enum SafetyCategory {
     CivicIntegrity,
 }
 
+/// Safety thresholds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -343,6 +362,7 @@ pub enum SafetyThreshold {
     BlockLowAndAbove,
 }
 
+/// File metadata.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -362,6 +382,7 @@ pub struct File {
     pub error: Option<serde_json::Value>,
 }
 
+/// File state.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -372,6 +393,7 @@ pub enum FileState {
     Failed,
 }
 
+/// File source.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -382,6 +404,7 @@ pub enum FileSource {
     Registered,
 }
 
+/// List files response.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -390,6 +413,7 @@ pub struct ListFilesResponse {
     pub next_page_token: Option<String>,
 }
 
+/// Batch request.
 #[derive(Debug, Clone, Serialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -398,6 +422,7 @@ pub struct BatchRequest {
     pub input_config: BatchInputConfig,
 }
 
+/// Batch input config.
 #[derive(Debug, Clone, Serialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -405,6 +430,7 @@ pub struct BatchInputConfig {
     pub file_name: String,
 }
 
+/// Batch metadata.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -418,6 +444,7 @@ pub struct Batch {
     pub update_time: String,
 }
 
+/// Batch state.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[allow(dead_code)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -431,6 +458,7 @@ pub enum BatchState {
     Expired,
 }
 
+/// Operation.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
@@ -441,6 +469,7 @@ pub struct Operation {
     pub response: Option<serde_json::Value>,
 }
 
+/// Cached content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 #[serde(rename_all = "camelCase")]

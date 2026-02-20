@@ -1,4 +1,4 @@
-use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, CachedContent, Content};
+use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, CachedContent, Content, InteractionTurn, InteractionContent, FunctionCall};
 use anyhow::Result;
 
 use dotenvy::dotenv;
@@ -241,4 +241,83 @@ async fn test_tool_calling() -> anyhow::Result<()> {
     
     Ok(())
 }
+
+#[tokio::test]
+async fn test_private_tool_calling_logic() -> anyhow::Result<()> {
+    let client = get_test_client();
+    
+    // 1. Define mock tool
+    let declaration = chitti::gemini::FunctionDeclaration {
+        name: "get_current_time".to_string(),
+        description: "Gets current time".to_string(),
+        parameters: Some(serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })),
+    };
+    let tools = vec![Tool::Function { declaration }];
+    
+    // 2. Start turn with PRIVATE MODE (store = false)
+    let r1 = client.interaction(InteractionInput::Text("What time is it? Use your tool.".to_string()))
+        .tools(tools.clone())
+        .store(false) // PRIVATE
+        .send()
+        .await?;
+        
+    // 3. Send result using STATELESS TURN REPLAY
+    let mut tool_called = false;
+    let mut model_parts = Vec::new();
+    let mut fc_to_respond: Option<FunctionCall> = None;
+    
+    for output in r1.outputs {
+        match output {
+            InteractionOutput::Text { text } => model_parts.push(InteractionPart::Text { text }),
+            InteractionOutput::Thought { signature, summary } => model_parts.push(InteractionPart::Thought { signature, summary }),
+            InteractionOutput::ThoughtSignature { signature } => model_parts.push(InteractionPart::Thought { signature, summary: String::new() }),
+            InteractionOutput::FunctionCall(fc) => {
+                model_parts.push(InteractionPart::FunctionCall(fc.clone()));
+                fc_to_respond = Some(fc);
+                tool_called = true;
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(fc) = fc_to_respond {
+        // Build history turns
+        let turns = vec![
+            chitti::brains::gemini::InteractionTurn {
+                role: Role::User,
+                content: chitti::brains::gemini::InteractionContent::from("What time is it? Use your tool.".to_string()),
+            },
+            chitti::brains::gemini::InteractionTurn {
+                role: Role::Model,
+                content: chitti::brains::gemini::InteractionContent::from(model_parts),
+            },
+            chitti::brains::gemini::InteractionTurn {
+                role: Role::User,
+                content: chitti::brains::gemini::InteractionContent::from(vec![
+                    InteractionPart::FunctionResponse(chitti::brains::gemini::FunctionResponse {
+                        id: fc.id,
+                        name: fc.name,
+                        response: serde_json::json!({"time": "12:00 PM"}),
+                    })
+                ]),
+            }
+        ];
+
+        let r2 = client.interaction(InteractionInput::Turns(turns))
+            .tools(tools.clone())
+            .store(false) // STILL PRIVATE
+            .send()
+            .await?;
+        
+        assert!(!r2.outputs.is_empty());
+        println!("Stateless private tool follow-up accepted by API");
+    }
+    
+    assert!(tool_called);
+    Ok(())
+}
+
 
