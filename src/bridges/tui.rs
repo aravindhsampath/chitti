@@ -12,11 +12,12 @@ use ratatui::{
     Terminal,
 };
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::io;
+use std::time::{Duration, Instant};
 
 pub struct TuiBridge {
     tx: mpsc::Sender<UserEvent>,
@@ -29,6 +30,7 @@ struct TuiUiState {
     session_state: Option<SessionState>,
     scroll_state: ListState,
     should_exit: bool,
+    last_ctrl_c: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -51,6 +53,7 @@ impl TuiBridge {
             session_state: None,
             scroll_state: ListState::default(),
             should_exit: false,
+            last_ctrl_c: None,
         }));
         (Self { tx, shared_state }, rx)
     }
@@ -89,6 +92,16 @@ impl TuiBridge {
                     if key.kind == KeyEventKind::Press {
                         let mut state = self.shared_state.lock().unwrap();
                         match key.code {
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                state.input.clear();
+                                if let Some(last) = state.last_ctrl_c {
+                                    if last.elapsed() < Duration::from_millis(500) {
+                                        state.should_exit = true;
+                                        self.tx.send(UserEvent::Input("/exit".to_string())).await?;
+                                    }
+                                }
+                                state.last_ctrl_c = Some(Instant::now());
+                            }
                             KeyCode::Enter => {
                                 let input = state.input.drain(..).collect::<String>();
                                 if !input.is_empty() {
