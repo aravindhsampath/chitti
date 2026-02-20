@@ -1,5 +1,5 @@
 use thiserror::Error;
-use crate::gemini::types::ApiError;
+use crate::brains::gemini::types::ApiError;
 use tokio_util::codec::LinesCodecError;
 
 #[derive(Error, Debug)]

@@ -1,6 +1,6 @@
 use reqwest::{Client as HttpClient, Method, RequestBuilder as ReqwestRequestBuilder, Response};
 use tracing::{debug, instrument, warn};
-use crate::gemini::error::GeminiError;
+use crate::brains::gemini::error::GeminiError;
 use std::time::Duration;
 use tokio::time::sleep;
 

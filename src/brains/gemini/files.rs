@@ -1,9 +1,9 @@
 use reqwest::Method;
 use std::path::Path;
 use tracing::instrument;
-use crate::gemini::client::Client;
-use crate::gemini::types::*;
-use crate::gemini::error::{GeminiError, Result};
+use crate::brains::gemini::client::Client;
+use crate::brains::gemini::types::*;
+use crate::brains::gemini::error::{GeminiError, Result};
 impl Client {
     /// Uploads a file to the Gemini File API.
     #[instrument(skip(self, path))]

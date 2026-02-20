@@ -1,7 +1,6 @@
-use chitti::gemini::{
-    Client, InteractionInput, InteractionEvent, InteractionOutput, Role, 
-    Part, InteractionPart, Tool, ThinkingLevel, CachedContent, Content, InteractionContent
-};
+use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, ThinkingLevel, CachedContent, Content, InteractionContent};
+use chitti::brains::gemini::ContentStartInfo;
+
 use dotenvy::dotenv;
 use std::env;
 use futures_util::StreamExt;

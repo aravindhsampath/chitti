@@ -5,6 +5,7 @@ pub mod files;
 pub mod batch;
 pub mod caching;
 pub mod error;
+pub mod adapter;
 
 
 pub use client::Client;

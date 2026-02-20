@@ -1,7 +1,7 @@
-use crate::gemini::client::Client;
+use crate::brains::gemini::client::Client;
 use tracing::debug;
-use crate::gemini::error::GeminiError;
-use crate::gemini::types::*;
+use crate::brains::gemini::error::GeminiError;
+use crate::brains::gemini::types::*;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use reqwest::{Method, Response};
 use tokio_util::codec::{FramedRead, LinesCodec};

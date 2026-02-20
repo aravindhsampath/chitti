@@ -1,8 +1,8 @@
 use reqwest::Method;
 use tracing::instrument;
-use crate::gemini::client::Client;
-use crate::gemini::types::*;
-use crate::gemini::error::{GeminiError, Result};
+use crate::brains::gemini::client::Client;
+use crate::brains::gemini::types::*;
+use crate::brains::gemini::error::{GeminiError, Result};
 
 impl Client {
     /// Creates a new cached content resource.
