@@ -1,56 +1,53 @@
 use async_trait::async_trait;
+use std::sync::Mutex;
 use tokio::sync::mpsc;
 use anyhow::Result;
 use std::io::{self, Write};
 use crate::bridges::CommBridge;
-use crate::conductor::events::{UserEvent, SystemEvent};
+use crate::conductor::events::{UserEvent, SystemEvent, SessionState};
 
 pub struct TuiBridge {
     tx: mpsc::Sender<UserEvent>,
+    state: Mutex<Option<SessionState>>,
 }
 
 impl TuiBridge {
     pub fn new() -> (Self, mpsc::Receiver<UserEvent>) {
         let (tx, rx) = mpsc::channel(100);
-        (Self { tx }, rx)
+        (Self { tx, state: Mutex::new(None) }, rx)
+    }
+
+    fn print_status_bar(&self) {
+        let state_lock = self.state.lock().unwrap();
+        if let Some(ref state) = *state_lock {
+            println!(
+                "\x1b[1;30;47m Model: {} | Thinking: {} | Stream: {} | PWD: {} | Branch: {} \x1b[0m",
+                state.model,
+                state.thinking_level,
+                if state.streaming { "ON" } else { "OFF" },
+                state.pwd,
+                state.git_branch
+            );
+        }
     }
 
     pub async fn run_input_loop(&self) -> Result<()> {
         let stdin = io::stdin();
         loop {
+            self.print_status_bar();
+            print!("chitti> ");
+            io::stdout().flush()?;
+            
             let mut user_input = String::new();
             stdin.read_line(&mut user_input)?;
             let prompt = user_input.trim();
             if prompt.is_empty() { continue; }
 
-            match prompt.to_lowercase().as_str() {
-                "y" | "yes" => {
-                    self.tx.send(UserEvent::Approve).await?;
-                }
-                "n" | "no" => {
-                    self.tx.send(UserEvent::Reject).await?;
-                }
-                _ if prompt.starts_with('/') => {
-                    let parts: Vec<&str> = prompt.split_whitespace().collect();
-                    match parts[0] {
-                        "/exit" | "/quit" => {
-                            self.tx.send(UserEvent::Command("/exit".to_string())).await?;
-                            break;
-                        }
-                        "/clear" => {
-                            self.tx.send(UserEvent::Command("/clear".to_string())).await?;
-                        }
-                        _ => {
-                            self.tx.send(UserEvent::Command(prompt.to_string())).await?;
-                        }
-                    }
-                }
-                _ => {
-                    // We treat normal messages as either Message or Steer 
-                    // depending on Conductor state, but TuiBridge just sends Message.
-                    // Conductor will decide how to handle it.
-                    self.tx.send(UserEvent::Message(prompt.to_string())).await?;
-                }
+            self.tx.send(UserEvent::Input(prompt.to_string())).await?;
+            
+            // If it's an exit command, we stop the loop
+            if prompt == "/exit" || prompt == "/quit" {
+                break;
             }
         }
         Ok(())
@@ -61,19 +58,30 @@ impl TuiBridge {
 impl CommBridge for TuiBridge {
     async fn send(&self, event: SystemEvent) -> Result<()> {
         let mut stdout = io::stdout();
+        
+        // Update local state cache from the event
+        {
+            let mut state_lock = self.state.lock().unwrap();
+            match &event {
+                SystemEvent::Text(_, state) => *state_lock = Some(state.clone()),
+                SystemEvent::ToolCall { state, .. } => *state_lock = Some(state.clone()),
+                SystemEvent::Error(_, state) => *state_lock = Some(state.clone()),
+                SystemEvent::RequestApproval { state, .. } => *state_lock = Some(state.clone()),
+            }
+        }
+
         match event {
-            SystemEvent::Text(text) => {
+            SystemEvent::Text(text, _) => {
                 print!("{}", text);
                 stdout.flush()?;
             }
-            SystemEvent::ToolCall { name, args } => {
-                // Dimmed output for tool calls
+            SystemEvent::ToolCall { name, args, .. } => {
                 println!("\x1b[34m\n[Chitti calling tool: {} with args: {}]\x1b[0m", name, args);
             }
-            SystemEvent::Error(err) => {
-                eprintln!("\x1b[31m\n[Error: {}]\x1b[31m", err);
+            SystemEvent::Error(err, _) => {
+                eprintln!("\x1b[31m\n[Error: {}]\x1b[0m", err);
             }
-            SystemEvent::RequestApproval { description } => {
+            SystemEvent::RequestApproval { description, .. } => {
                 print!("\n\x1b[33m[Approval required: {}]\x1b[0m\nConfirm? (y/n): ", description);
                 stdout.flush()?;
             }

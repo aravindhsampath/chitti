@@ -40,7 +40,14 @@ impl BrainEngine for GeminiEngine {
             InteractionInput::Parts(parts)
         };
 
-        let mut builder = self.client.interaction(input);
+        let mut builder = self.client.interaction(input)
+            .thinking_level(match context.thinking_level.to_lowercase().as_str() {
+                "minimal" => crate::brains::gemini::types::ThinkingLevel::Minimal,
+                "low" => crate::brains::gemini::types::ThinkingLevel::Low,
+                "medium" => crate::brains::gemini::types::ThinkingLevel::Medium,
+                _ => crate::brains::gemini::types::ThinkingLevel::High,
+            });
+
         if let Some(id) = context.previous_interaction_id {
             builder = builder.previous_interaction_id(id);
         }
@@ -51,42 +58,71 @@ impl BrainEngine for GeminiEngine {
             builder = builder.tools(tool_defs);
         }
 
-        let stream = builder.stream().await?;
+        if context.streaming {
+            let stream = builder.stream().await?;
 
-        let brain_stream = stream.map(|res| {
-            match res {
-                Ok(evt) => {
-                    match evt {
-                        crate::brains::gemini::types::InteractionEvent::ContentDelta { delta, .. } => {
-                            match delta {
-                                crate::brains::gemini::types::InteractionOutput::Text { text } => Ok(BrainEvent::TextDelta(text)),
-                                crate::brains::gemini::types::InteractionOutput::ContentDelta { text, thought } => {
-                                    if thought.unwrap_or(false) {
-                                        Ok(BrainEvent::ThoughtDelta(text))
-                                    } else {
-                                        Ok(BrainEvent::TextDelta(text))
+            let brain_stream = stream.map(|res| {
+                match res {
+                    Ok(evt) => {
+                        match evt {
+                            crate::brains::gemini::types::InteractionEvent::ContentDelta { delta, .. } => {
+                                match delta {
+                                    crate::brains::gemini::types::InteractionOutput::Text { text } => Ok(BrainEvent::TextDelta(text)),
+                                    crate::brains::gemini::types::InteractionOutput::ContentDelta { text, thought } => {
+                                        if thought.unwrap_or(false) {
+                                            Ok(BrainEvent::ThoughtDelta(text))
+                                        } else {
+                                            Ok(BrainEvent::TextDelta(text))
+                                        }
                                     }
+                                    crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
+                                        Ok(BrainEvent::ToolCall { 
+                                            name: fc.name, 
+                                            id: fc.id.unwrap_or_default(), 
+                                            args: serde_json::to_value(fc.args).unwrap_or_default() 
+                                        })
+                                    }
+                                    _ => Ok(BrainEvent::Complete { interaction_id: None }),
                                 }
-                                crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
-                                    Ok(BrainEvent::ToolCall { 
-                                        name: fc.name, 
-                                        id: fc.id.unwrap_or_default(), 
-                                        args: serde_json::to_value(fc.args).unwrap_or_default() 
-                                    })
-                                }
-                                _ => Ok(BrainEvent::Complete { interaction_id: None }),
                             }
+                            crate::brains::gemini::types::InteractionEvent::InteractionComplete { interaction } => {
+                                Ok(BrainEvent::Complete { interaction_id: interaction.id })
+                            }
+                            _ => Ok(BrainEvent::Complete { interaction_id: None }),
                         }
-                        crate::brains::gemini::types::InteractionEvent::InteractionComplete { interaction } => {
-                            Ok(BrainEvent::Complete { interaction_id: interaction.id })
-                        }
-                        _ => Ok(BrainEvent::Complete { interaction_id: None }),
                     }
+                    Err(e) => Err(anyhow::anyhow!("Gemini stream error: {:?}", e)),
                 }
-                Err(e) => Err(anyhow::anyhow!("Gemini stream error: {:?}", e)),
-            }
-        });
+            });
 
-        Ok(Box::pin(brain_stream))
+            Ok(Box::pin(brain_stream))
+        } else {
+            let response = builder.send().await?;
+            let mut events = Vec::new();
+            for output in response.outputs {
+                match output {
+                    crate::brains::gemini::types::InteractionOutput::Text { text } => {
+                        events.push(Ok(BrainEvent::TextDelta(text)));
+                    }
+                    crate::brains::gemini::types::InteractionOutput::ContentDelta { text, thought } => {
+                        if thought.unwrap_or(false) {
+                            events.push(Ok(BrainEvent::ThoughtDelta(text)));
+                        } else {
+                            events.push(Ok(BrainEvent::TextDelta(text)));
+                        }
+                    }
+                    crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
+                        events.push(Ok(BrainEvent::ToolCall {
+                            name: fc.name,
+                            id: fc.id.unwrap_or_default(),
+                            args: serde_json::to_value(fc.args).unwrap_or_default(),
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+            events.push(Ok(BrainEvent::Complete { interaction_id: response.id }));
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
     }
 }

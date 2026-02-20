@@ -13,6 +13,7 @@ mod tools;
 
 use brains::gemini::adapter::GeminiEngine;
 use bridges::tui::TuiBridge;
+use bridges::CommBridge;
 use conductor::Conductor;
 use tools::ToolRegistry;
 use tools::bash::BashTool;
@@ -37,15 +38,21 @@ async fn main() -> Result<()> {
     let tools = Arc::new(registry);
 
     // 4. Initialize Components
-    let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model);
+    let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client, tools.clone()));
     
     let (tui, rx) = TuiBridge::new();
     let bridge = Arc::new(tui);
 
     // 5. Start the Conductor
-    let mut conductor = Conductor::new(brain, bridge.clone(), rx, tools.clone());
+    let mut conductor = Conductor::new(brain, bridge.clone(), rx, tools.clone(), config.gemini_model);
     
+    // Send an initial empty message or system event to sync the UI state
+    bridge.send(crate::conductor::events::SystemEvent::Text(
+        "Welcome to Chitti! Type your message or a command (e.g., /stream, /thinking, /exit).\n".to_string(),
+        conductor.get_state_snapshot()
+    )).await?;
+
     // Spawn TUI input loop
     let tui_handle = bridge.clone();
     tokio::spawn(async move {

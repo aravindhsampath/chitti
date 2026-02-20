@@ -1,5 +1,4 @@
-use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, ThinkingLevel, CachedContent, Content, InteractionContent};
-use chitti::brains::gemini::ContentStartInfo;
+use chitti::brains::gemini::{Client, InteractionInput, InteractionEvent, InteractionOutput, Role, Part, InteractionPart, Tool, CachedContent, Content};
 
 use dotenvy::dotenv;
 use std::env;
@@ -48,7 +47,7 @@ async fn test_exhaustive_checklist() -> anyhow::Result<()> {
     assert!(text.to_lowercase().contains("phil"));
 
     println!("2. Testing Streaming & Content Delta...");
-    let mut stream = client.interaction(InteractionInput::Text("Count to 3".to_string()))
+    let stream = client.interaction(InteractionInput::Text("Count to 3".to_string()))
         .stream()
         .await?;
     tokio::pin!(stream);
