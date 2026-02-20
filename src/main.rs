@@ -37,6 +37,7 @@ async fn main() -> Result<()> {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(BashTool));
     registry.register(Box::new(EditorTool));
+    registry.register(Box::new(WebTool));
     let tools = Arc::new(registry);
 
     // 4. Initialize Components

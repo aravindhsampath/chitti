@@ -6,6 +6,7 @@ use crate::brains::gemini::types::FunctionDeclaration;
 
 pub mod bash;
 pub mod editor;
+pub mod web;
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {
