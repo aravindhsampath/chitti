@@ -11,6 +11,8 @@ pub enum UserEvent {
 #[derive(Debug, Clone, Serialize)]
 pub enum SystemEvent {
     Text(String, SessionState),
+    Thought(String, SessionState),
+    Info(String, SessionState),
     ToolCall { name: String, args: Value, state: SessionState },
     Error(String, SessionState),
     RequestApproval { description: String, state: SessionState },

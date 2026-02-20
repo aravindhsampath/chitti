@@ -35,6 +35,7 @@ struct TuiUiState {
 enum ChatMessage {
     User(String),
     Model(String),
+    Thought(String),
     System(String),
     Error(String),
     Tool(String),
@@ -161,6 +162,7 @@ impl TuiBridge {
             let (content, style) = match m {
                 ChatMessage::User(t) => (format!("User: {}", t), Style::default().fg(Color::Cyan)),
                 ChatMessage::Model(t) => (format!("Chitti: {}", t), Style::default().fg(Color::Green)),
+                ChatMessage::Thought(t) => (format!("Thought: {}", t), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
                 ChatMessage::System(t) => (format!("System: {}", t), Style::default().fg(Color::Yellow)),
                 ChatMessage::Error(t) => (format!("Error: {}", t), Style::default().fg(Color::Red)),
                 ChatMessage::Tool(t) => (format!("Tool: {}", t), Style::default().fg(Color::Blue).add_modifier(Modifier::ITALIC)),
@@ -204,6 +206,8 @@ impl CommBridge for TuiBridge {
         // Sync SessionState
         match &event {
             SystemEvent::Text(_, s) => state.session_state = Some(s.clone()),
+            SystemEvent::Thought(_, s) => state.session_state = Some(s.clone()),
+            SystemEvent::Info(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::ToolCall { state: s, .. } => state.session_state = Some(s.clone()),
             SystemEvent::Error(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::RequestApproval { state: s, .. } => state.session_state = Some(s.clone()),
@@ -212,8 +216,6 @@ impl CommBridge for TuiBridge {
 
         match event {
             SystemEvent::Text(text, _) => {
-                // If the last message was a Model message, append to it (for streaming)
-                // Otherwise start a new one.
                 let should_append = match state.messages.last() {
                     Some(ChatMessage::Model(_)) => true,
                     _ => false,
@@ -227,6 +229,20 @@ impl CommBridge for TuiBridge {
                     state.messages.push(ChatMessage::Model(text));
                 }
             }
+            SystemEvent::Thought(text, _) => {
+                let should_append = match state.messages.last() {
+                    Some(ChatMessage::Thought(_)) => true,
+                    _ => false,
+                };
+
+                if should_append {
+                    if let Some(ChatMessage::Thought(ref mut last_text)) = state.messages.last_mut() {
+                        last_text.push_str(&text);
+                    }
+                } else {
+                    state.messages.push(ChatMessage::Thought(text));
+                }
+            }
             SystemEvent::ToolCall { name, args, .. } => {
                 state.messages.push(ChatMessage::Tool(format!("Calling {} with {}", name, args)));
             }
@@ -237,9 +253,10 @@ impl CommBridge for TuiBridge {
                 state.messages.push(ChatMessage::System(format!("APPROVAL REQUIRED: {}", description)));
                 state.messages.push(ChatMessage::System("Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string()));
             }
-            SystemEvent::Ready(_) => {
-                // Just used for state sync
+            SystemEvent::Info(text, _) => {
+                state.messages.push(ChatMessage::System(text));
             }
+            SystemEvent::Ready(_) => {}
         }
         
         // Ensure scroll follows new content if we were at the bottom

@@ -91,32 +91,32 @@ impl Conductor {
                     "/exit" | "/quit" => break,
                     "/clear" => {
                         self.previous_interaction_id = None;
-                        self.bridge.send(SystemEvent::Text("Context cleared.".to_string(), self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Info("Context cleared.".to_string(), self.get_state_snapshot())).await?;
                     }
                     "/stream" => {
                         self.streaming = !self.streaming;
-                        self.bridge.send(SystemEvent::Text(format!("Streaming is now {}", if self.streaming {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Info(format!("Streaming is now {}", if self.streaming {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
                     }
                     "/thinking" if parts.len() > 1 => {
                         self.thinking_level = parts[1].to_string();
-                        self.bridge.send(SystemEvent::Text(format!("Thinking level set to {}", self.thinking_level), self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Info(format!("Thinking level set to {}", self.thinking_level), self.get_state_snapshot())).await?;
                     }
                     "/memory" => {
                         self.memory_enabled = !self.memory_enabled;
                         if !self.memory_enabled {
                             self.previous_interaction_id = None;
                         }
-                        self.bridge.send(SystemEvent::Text(format!("Session memory is now {}", if self.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Info(format!("Session memory is now {}", if self.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
                     }
                     "/help" | "/" => {
-                        let help_text = "\nAvailable Commands:\n\
+                        let help_text = "Available Commands:\n\
                               /stream          - Toggle real-time streaming\n\
                               /thinking <lvl>  - Set thinking level (minimal, low, medium, high)\n\
                               /memory          - Toggle session memory (privacy mode)\n\
                               /clear           - Clear conversation context\n\
                               /exit | /quit    - Exit Chitti\n\
-                              /help | /        - Show this help menu\n";
-                        self.bridge.send(SystemEvent::Text(help_text.to_string(), self.get_state_snapshot())).await?;
+                              /help | /        - Show this help menu";
+                        self.bridge.send(SystemEvent::Info(help_text.to_string(), self.get_state_snapshot())).await?;
                     }
                     _ => {
                         self.bridge.send(SystemEvent::Error(format!("Unknown command: {}", parts[0]), self.get_state_snapshot())).await?;
@@ -166,7 +166,7 @@ impl Conductor {
                         self.bridge.send(SystemEvent::Text(text, self.get_state_snapshot())).await?;
                     }
                     BrainEvent::ThoughtDelta(thought) => {
-                        self.bridge.send(SystemEvent::Text(format!("\x1b[2m{}\x1b[0m", thought), self.get_state_snapshot())).await?;
+                        self.bridge.send(SystemEvent::Thought(thought, self.get_state_snapshot())).await?;
                     }
                     BrainEvent::ToolCall { name, id, args } => {
                         self.bridge.send(SystemEvent::ToolCall { name: name.clone(), args: args.clone(), state: self.get_state_snapshot() }).await?;
