@@ -90,56 +90,65 @@ impl TuiBridge {
             if event::poll(std::time::Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        let mut state = self.shared_state.lock().unwrap();
-                        match key.code {
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                state.input.clear();
-                                if let Some(last) = state.last_ctrl_c {
-                                    if last.elapsed() < Duration::from_millis(500) {
-                                        state.should_exit = true;
-                                        self.tx.send(UserEvent::Input("/exit".to_string())).await?;
-                                    }
-                                }
-                                state.last_ctrl_c = Some(Instant::now());
-                            }
-                            KeyCode::Enter => {
-                                let input = state.input.drain(..).collect::<String>();
-                                if !input.is_empty() {
-                                    state.messages.push(ChatMessage::User(input.clone()));
-                                    self.tx.send(UserEvent::Input(input)).await?;
-                                }
-                            }
-                            KeyCode::Char(c) => {
-                                state.input.push(c);
-                            }
-                            KeyCode::Backspace => {
-                                state.input.pop();
-                            }
-                            KeyCode::Esc => {
-                                state.should_exit = true;
-                                self.tx.send(UserEvent::Input("/exit".to_string())).await?;
-                            }
-                            KeyCode::Up => {
-                                let i = match state.scroll_state.selected() {
-                                    Some(i) => {
-                                        if i == 0 {
-                                            0
-                                        } else {
-                                            i - 1
+                        let mut event_to_send = None;
+                        {
+                            let mut state = self.shared_state.lock().unwrap();
+                            match key.code {
+                                KeyCode::Char('c')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    state.input.clear();
+                                    if let Some(last) = state.last_ctrl_c {
+                                        if last.elapsed() < Duration::from_millis(500) {
+                                            state.should_exit = true;
+                                            event_to_send =
+                                                Some(UserEvent::Input("/exit".to_string()));
                                         }
                                     }
-                                    None => 0,
-                                };
-                                state.scroll_state.select(Some(i));
+                                    state.last_ctrl_c = Some(Instant::now());
+                                }
+                                KeyCode::Enter => {
+                                    let input = state.input.drain(..).collect::<String>();
+                                    if !input.is_empty() {
+                                        state.messages.push(ChatMessage::User(input.clone()));
+                                        event_to_send = Some(UserEvent::Input(input));
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    state.input.push(c);
+                                }
+                                KeyCode::Backspace => {
+                                    state.input.pop();
+                                }
+                                KeyCode::Esc => {
+                                    state.should_exit = true;
+                                    event_to_send = Some(UserEvent::Input("/exit".to_string()));
+                                }
+                                KeyCode::Up => {
+                                    let i = match state.scroll_state.selected() {
+                                        Some(i) => {
+                                            if i == 0 {
+                                                0
+                                            } else {
+                                                i - 1
+                                            }
+                                        }
+                                        None => 0,
+                                    };
+                                    state.scroll_state.select(Some(i));
+                                }
+                                KeyCode::Down => {
+                                    let i = match state.scroll_state.selected() {
+                                        Some(i) => i + 1,
+                                        None => 0,
+                                    };
+                                    state.scroll_state.select(Some(i));
+                                }
+                                _ => {}
                             }
-                            KeyCode::Down => {
-                                let i = match state.scroll_state.selected() {
-                                    Some(i) => i + 1,
-                                    None => 0,
-                                };
-                                state.scroll_state.select(Some(i));
-                            }
-                            _ => {}
+                        }
+                        if let Some(evt) = event_to_send {
+                            self.tx.send(evt).await?;
                         }
                     }
                 }
@@ -189,31 +198,31 @@ impl TuiBridge {
             .map(|m| {
                 let (content, style) = match m {
                     ChatMessage::User(t) => {
-                        (format!("User: {}", t), Style::default().fg(Color::Cyan))
+                        (format!("User: {t}"), Style::default().fg(Color::Cyan))
                     }
                     ChatMessage::Model(t) => {
-                        (format!("Chitti: {}", t), Style::default().fg(Color::Green))
+                        (format!("Chitti: {t}"), Style::default().fg(Color::Green))
                     }
                     ChatMessage::Thought(t) => (
-                        format!("Thought: {}", t),
+                        format!("Thought: {t}"),
                         Style::default()
                             .fg(Color::DarkGray)
                             .add_modifier(Modifier::ITALIC),
                     ),
                     ChatMessage::System(t) => {
-                        (format!("System: {}", t), Style::default().fg(Color::Yellow))
+                        (format!("System: {t}"), Style::default().fg(Color::Yellow))
                     }
                     ChatMessage::Error(t) => {
-                        (format!("Error: {}", t), Style::default().fg(Color::Red))
+                        (format!("Error: {t}"), Style::default().fg(Color::Red))
                     }
                     ChatMessage::Tool(t) => (
-                        format!("Tool: {}", t),
+                        format!("Tool: {t}"),
                         Style::default()
                             .fg(Color::Blue)
                             .add_modifier(Modifier::ITALIC),
                     ),
                     ChatMessage::Debug(t) => (
-                        format!("DEBUG: {}", t),
+                        format!("DEBUG: {t}"),
                         Style::default()
                             .fg(Color::Magenta)
                             .add_modifier(Modifier::DIM),
@@ -271,10 +280,7 @@ impl CommBridge for TuiBridge {
 
         match event {
             SystemEvent::Text(text, _) => {
-                let should_append = match state.messages.last() {
-                    Some(ChatMessage::Model(_)) => true,
-                    _ => false,
-                };
+                let should_append = matches!(state.messages.last(), Some(ChatMessage::Model(_)));
 
                 if should_append {
                     if let Some(ChatMessage::Model(ref mut last_text)) = state.messages.last_mut() {
@@ -285,10 +291,7 @@ impl CommBridge for TuiBridge {
                 }
             }
             SystemEvent::Thought(text, _) => {
-                let should_append = match state.messages.last() {
-                    Some(ChatMessage::Thought(_)) => true,
-                    _ => false,
-                };
+                let should_append = matches!(state.messages.last(), Some(ChatMessage::Thought(_)));
 
                 if should_append {
                     if let Some(ChatMessage::Thought(ref mut last_text)) = state.messages.last_mut()
@@ -302,7 +305,7 @@ impl CommBridge for TuiBridge {
             SystemEvent::ToolCall { name, args, .. } => {
                 state
                     .messages
-                    .push(ChatMessage::Tool(format!("Calling {} with {}", name, args)));
+                    .push(ChatMessage::Tool(format!("Calling {name} with {args}")));
             }
             SystemEvent::Error(err, _) => {
                 state.messages.push(ChatMessage::Error(err));
@@ -315,8 +318,7 @@ impl CommBridge for TuiBridge {
             }
             SystemEvent::RequestApproval { description, .. } => {
                 state.messages.push(ChatMessage::System(format!(
-                    "APPROVAL REQUIRED: {}",
-                    description
+                    "APPROVAL REQUIRED: {description}"
                 )));
                 state.messages.push(ChatMessage::System(
                     "Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string(),

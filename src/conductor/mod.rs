@@ -135,18 +135,16 @@ impl Conductor {
                             .await?;
                     }
                 }
-            } else {
-                if let Err(e) = self.handle_conversation(input).await {
-                    tracing::error!("Conversation error: {:?}", e);
-                    let _ = self
-                        .bridge
-                        .send(SystemEvent::Error(
-                            format!("Conversation Error: {:?}", e),
-                            self.get_state_snapshot(),
-                        ))
-                        .await;
-                    self.interaction_id = None;
-                }
+            } else if let Err(e) = self.handle_conversation(input).await {
+                tracing::error!("Conversation error: {:?}", e);
+                let _ = self
+                    .bridge
+                    .send(SystemEvent::Error(
+                        format!("Conversation Error: {:?}", e),
+                        self.get_state_snapshot(),
+                    ))
+                    .await;
+                self.interaction_id = None;
             }
         }
         Ok(())

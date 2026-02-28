@@ -26,7 +26,6 @@ impl<'a> InteractionRequestBuilder<'a> {
                 system_instruction: None,
                 previous_interaction_id: None,
                 tools: None,
-
                 tool_choice: None,
                 generation_config: None,
                 safety_settings: None,
@@ -62,11 +61,13 @@ impl<'a> InteractionRequestBuilder<'a> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn previous_interaction_id(mut self, id: String) -> Self {
         self.request.previous_interaction_id = Some(id);
         self
     }
 
+    #[allow(dead_code)]
     pub fn tools(mut self, tools: Vec<Tool>) -> Self {
         self.request.tools = Some(tools);
         self
@@ -126,8 +127,7 @@ impl<'a> InteractionRequestBuilder<'a> {
             } else if error_text.starts_with("event: error") {
                 let mut ext_msg = error_text.clone();
                 for line in error_text.lines() {
-                    if line.starts_with("data: ") {
-                        let data = &line["data: ".len()..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                             if let Some(msg) = json
                                 .get("error")
@@ -192,8 +192,7 @@ impl<'a> InteractionRequestBuilder<'a> {
             } else if error_text.starts_with("event: error") {
                 let mut ext_msg = error_text.clone();
                 for line in error_text.lines() {
-                    if line.starts_with("data: ") {
-                        let data = &line["data: ".len()..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                             if let Some(msg) = json
                                 .get("error")
@@ -223,9 +222,7 @@ impl<'a> InteractionRequestBuilder<'a> {
 fn parse_sse_stream(
     response: Response,
 ) -> impl Stream<Item = Result<InteractionEvent, GeminiError>> {
-    let stream = response
-        .bytes_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
 
     let reader = StreamReader::new(stream);
     let codec = LinesCodec::new();
@@ -233,8 +230,7 @@ fn parse_sse_stream(
     async_stream::try_stream! {
         while let Some(line_res) = reader.next().await {
             let line = line_res?;
-            if line.starts_with("data: ") {
-                let data = &line["data: ".len()..];
+            if let Some(data) = line.strip_prefix("data: ") {
                 if data == "[DONE]" {
                     return;
                 }
