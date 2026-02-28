@@ -41,7 +41,6 @@ enum ChatMessage {
     System(String),
     Error(String),
     Tool(String),
-    Debug(String),
 }
 
 impl TuiBridge {
@@ -161,14 +160,13 @@ impl TuiBridge {
         // 1. Status Bar
         let status_bar = if let Some(ref s) = state.session_state {
             format!(
-                " Model: {} | Thinking: {} | Stream: {} | Memory: {} | PWD: {} | Branch: {} | DEV: {} ",
+                " Model: {} | Thinking: {} | Stream: {} | Memory: {} | PWD: {} | Branch: {} ",
                 s.model,
                 s.thinking_level,
                 if s.streaming { "ON" } else { "OFF" },
                 if s.memory_enabled { "ON" } else { "OFF" },
                 s.pwd,
-                s.git_branch,
-                if s.dev_mode { "ON" } else { "OFF" }
+                s.git_branch
             )
         } else {
             " Initializing Chitti... ".to_string()
@@ -211,12 +209,6 @@ impl TuiBridge {
                         Style::default()
                             .fg(Color::Blue)
                             .add_modifier(Modifier::ITALIC),
-                    ),
-                    ChatMessage::Debug(t) => (
-                        format!("DEBUG: {}", t),
-                        Style::default()
-                            .fg(Color::Magenta)
-                            .add_modifier(Modifier::DIM),
                     ),
                 };
                 ListItem::new(content).style(style)
@@ -264,7 +256,6 @@ impl CommBridge for TuiBridge {
             SystemEvent::Info(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::ToolCall { state: s, .. } => state.session_state = Some(s.clone()),
             SystemEvent::Error(_, s) => state.session_state = Some(s.clone()),
-            SystemEvent::Debug(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::RequestApproval { state: s, .. } => state.session_state = Some(s.clone()),
             SystemEvent::Ready(s) => state.session_state = Some(s.clone()),
         }
@@ -306,9 +297,6 @@ impl CommBridge for TuiBridge {
             }
             SystemEvent::Error(err, _) => {
                 state.messages.push(ChatMessage::Error(err));
-            }
-            SystemEvent::Debug(text, _) => {
-                state.messages.push(ChatMessage::Debug(text));
             }
             SystemEvent::Info(text, _) => {
                 state.messages.push(ChatMessage::System(text));

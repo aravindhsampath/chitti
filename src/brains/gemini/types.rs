@@ -296,11 +296,7 @@ pub enum InteractionOutput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ContentStartInfo {
-    #[serde(rename = "type")]
-    pub content_type: String,
-}
-
+pub struct ContentStartInfo {}
 /// Events yielded during a streaming interaction.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]

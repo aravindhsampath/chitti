@@ -9,17 +9,10 @@ mod brains;
 mod bridges;
 mod conductor;
 mod config;
-mod tools;
-
 use crate::brains::gemini::adapter::GeminiEngine;
 use crate::bridges::tui::TuiBridge;
 use crate::bridges::CommBridge;
 use crate::conductor::Conductor;
-use crate::tools::bash::BashTool;
-use crate::tools::editor::EditorTool;
-use crate::tools::web::WebTool;
-use crate::tools::ToolRegistry;
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Initialize Logging
@@ -37,37 +30,14 @@ async fn main() -> Result<()> {
     let config = config::Config::from_env().context("Failed to load configuration")?;
     info!("Chitti initialized with model: {}", config.gemini_model);
 
-    // 3. Initialize Tool Registry
-    let mut registry = ToolRegistry::new();
-    registry.register(Box::new(BashTool));
-    registry.register(Box::new(EditorTool));
-    registry.register(Box::new(WebTool));
-    let tools = Arc::new(registry);
-
-    // 4. Initialize Components
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
-    let brain = Box::new(GeminiEngine::new(client, tools.clone()));
+    let brain = Box::new(GeminiEngine::new(client));
 
     let (tui, rx) = TuiBridge::new();
     let bridge = Arc::new(tui);
 
-    // 5. Start the Conductor
-    let session_dir = std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join(".chitti");
-    let session_path = session_dir.join("session.json");
-
-    let mut conductor = Conductor::new(
-        brain,
-        bridge.clone(),
-        rx,
-        tools.clone(),
-        config.gemini_model,
-        config.dev_mode,
-        session_path,
-    );
-    conductor.init().await?;
+    // 3. Start the Conductor
+    let mut conductor = Conductor::new(brain, bridge.clone(), rx);
 
     // Send an initial empty message or system event to sync the UI state
     bridge.send(crate::conductor::events::SystemEvent::Text(

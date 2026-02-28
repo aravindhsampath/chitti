@@ -99,10 +99,10 @@ impl RequestBuilder {
     }
 
     #[instrument(
-        skip(self), 
+        skip(self),
         fields(
             request_id = %self.request_id,
-            method = %self.method, 
+            method = %self.method,
             url = %self.url
         )
     )]

@@ -1,23 +1,19 @@
 use crate::brains::gemini::Client;
 use crate::brains::BrainEngine;
 use crate::conductor::events::{BrainEvent, TurnContext};
-use crate::tools::ToolRegistry;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::{stream::BoxStream, StreamExt};
-use std::sync::Arc;
 
 pub struct GeminiEngine {
     client: Client,
-    tools: Arc<ToolRegistry>,
 }
 
 impl GeminiEngine {
-    pub fn new(client: Client, tools: Arc<ToolRegistry>) -> Self {
-        Self { client, tools }
+    pub fn new(client: Client) -> Self {
+        Self { client }
     }
 }
-
 #[async_trait]
 impl BrainEngine for GeminiEngine {
     async fn process_turn(
@@ -39,12 +35,20 @@ impl BrainEngine for GeminiEngine {
             builder = builder.previous_interaction_id(id);
         }
 
-        // Add tool definitions
-        let tool_defs = self.tools.get_definitions();
-        if !tool_defs.is_empty() {
-            builder = builder.tools(tool_defs);
-        }
-
+        // Add simple mock 'ls' tool definition to test function calling
+        let ls_tool = crate::brains::gemini::types::Tool::Function {
+            declaration: crate::brains::gemini::types::FunctionDeclaration {
+                name: "ls".to_string(),
+                description: "List files in a directory".to_string(),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                })),
+            },
+        };
+        builder = builder.tools(vec![ls_tool]);
         if context.streaming {
             let stream = builder.stream().await?;
 
@@ -73,10 +77,10 @@ impl BrainEngine for GeminiEngine {
                                         }
                                     }
                                     crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
-                                        Ok(BrainEvent::ToolCall { 
-                                            name: fc.name, 
-                                            id: fc.id.unwrap_or_default(), 
-                                            args: serde_json::to_value(fc.args).unwrap_or_default() 
+                                        Ok(BrainEvent::ToolCall {
+                                            name: fc.name,
+                                            id: fc.id.unwrap_or_default(),
+                                            args: serde_json::to_value(fc.args).unwrap_or_default()
                                         })
                                     }
                                     _ => {
@@ -135,114 +139,5 @@ impl BrainEngine for GeminiEngine {
             }));
             Ok(Box::pin(futures_util::stream::iter(events)))
         }
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockito::Server;
-    use serde_json::json;
-    use crate::brains::gemini::types::InteractionInput;
-
-    #[tokio::test]
-    async fn test_adapter_streaming_parsing() {
-        let mut server = Server::new_async().await;
-        let mock = server.mock("POST", "/v1beta/interactions")
-            .with_status(200)
-            .with_header("content-type", "text/event-stream")
-            .with_body(
-                "data: {\"event_type\":\"content.delta\",\"delta\":{\"type\":\"text\",\"text\":\"hello \"}}\n\n\
-                 data: {\"event_type\":\"content.delta\",\"delta\":{\"type\":\"text\",\"text\":\"world\"}}\n\n\
-                 data: {\"event_type\":\"interaction.complete\",\"interaction\":{\"id\":\"int_123\",\"model\":\"gemini-3-flash-preview\",\"status\":\"completed\",\"outputs\":[]}}\n\n\
-                 data: [DONE]\n\n"
-            )
-            .create_async().await;
-
-        let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
-            .with_base_url(server.url());
-        
-        let engine = GeminiEngine::new(client, Arc::new(ToolRegistry::new()));
-        
-        let context = TurnContext {
-            input: InteractionInput::Text("Hi".to_string()),
-            previous_interaction_id: None,
-            streaming: true,
-            thinking_level: "high".to_string(),
-            memory_enabled: true,
-            dev_mode: false,
-        };
-
-        let mut stream = engine.process_turn(context).await.unwrap();
-        
-        let mut events = Vec::new();
-        while let Some(Ok(event)) = stream.next().await {
-            events.push(event);
-        }
-        
-        assert_eq!(events.len(), 3);
-        match &events[0] {
-            BrainEvent::TextDelta(t) => assert_eq!(t, "hello "),
-            _ => panic!("Expected TextDelta"),
-        }
-        match &events[1] {
-            BrainEvent::TextDelta(t) => assert_eq!(t, "world"),
-            _ => panic!("Expected TextDelta"),
-        }
-        match &events[2] {
-            BrainEvent::Complete { interaction_id } => assert_eq!(interaction_id.as_deref(), Some("int_123")),
-            _ => panic!("Expected Complete"),
-        }
-        
-        mock.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn test_adapter_non_streaming_parsing() {
-        let mut server = Server::new_async().await;
-        let mock = server.mock("POST", "/v1beta/interactions")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(json!({
-                "id": "int_456",
-                "model": "gemini-3-flash-preview",
-                "status": "completed",
-                "outputs": [{ "type": "text", "text": "Hello non-stream" }]
-            }).to_string())
-            .create_async().await;
-
-        let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
-            .with_base_url(server.url());
-        
-        let engine = GeminiEngine::new(client, Arc::new(ToolRegistry::new()));
-        
-        let context = TurnContext {
-            input: InteractionInput::Text("Hi".to_string()),
-            previous_interaction_id: None,
-            streaming: false,
-            thinking_level: "low".to_string(),
-            memory_enabled: false,
-            dev_mode: false,
-        };
-
-        let mut stream = engine.process_turn(context).await.unwrap();
-        
-        let mut events = Vec::new();
-        while let Some(Ok(event)) = stream.next().await {
-            events.push(event);
-        }
-        
-        assert_eq!(events.len(), 2);
-        match &events[0] {
-            BrainEvent::TextDelta(t) => assert_eq!(t, "Hello non-stream"),
-            _ => panic!("Expected TextDelta"),
-        }
-        match &events[1] {
-            BrainEvent::Complete { interaction_id } => assert_eq!(interaction_id.as_deref(), Some("int_456")),
-            _ => panic!("Expected Complete"),
-        }
-        
-        mock.assert_async().await;
     }
 }

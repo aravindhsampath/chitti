@@ -2,7 +2,6 @@ pub mod brains;
 pub mod bridges;
 pub mod conductor;
 pub mod config;
-pub mod tools;
 
 // Re-export gemini for backward compatibility during refactor if needed,
 // or simply expose the new path.

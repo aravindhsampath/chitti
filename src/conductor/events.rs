@@ -19,7 +19,6 @@ pub enum SystemEvent {
         state: SessionState,
     },
     Error(String, SessionState),
-    Debug(String, SessionState),
     RequestApproval {
         description: String,
         state: SessionState,
@@ -31,7 +30,6 @@ pub enum SystemEvent {
 pub struct SessionState {
     pub model: String,
     pub thinking_level: String,
-    pub dev_mode: bool,
     pub streaming: bool,
     pub memory_enabled: bool,
     pub pwd: String,
@@ -64,8 +62,6 @@ pub struct TurnContext {
     pub streaming: bool,
     pub thinking_level: String,
     pub memory_enabled: bool,
-    #[allow(dead_code)]
-    pub dev_mode: bool,
 }
 
 #[derive(Debug, Clone)]

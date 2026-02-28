@@ -257,7 +257,6 @@ impl Client {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,59 +266,76 @@ mod tests {
     #[tokio::test]
     async fn test_interaction_send_success() {
         let mut server = Server::new_async().await;
-        let mock = server.mock("POST", "/v1beta/interactions")
+        let mock = server
+            .mock("POST", "/v1beta/interactions")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!({
-                "model": "gemini-3-flash-preview",
-                "status": "completed",
-                "outputs": [{ "type": "text", "text": "Hello world" }]
-            }).to_string())
-            .create_async().await;
+            .with_body(
+                json!({
+                    "model": "gemini-3-flash-preview",
+                    "status": "completed",
+                    "outputs": [{ "type": "text", "text": "Hello world" }]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
 
         let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
             .with_base_url(server.url());
 
-        let response = client.interaction(InteractionInput::Text("Hi".to_string())).send().await.unwrap();
-        
+        let response = client
+            .interaction(InteractionInput::Text("Hi".to_string()))
+            .send()
+            .await
+            .unwrap();
+
         assert_eq!(response.model, "gemini-3-flash-preview");
         assert_eq!(response.outputs.len(), 1);
         match &response.outputs[0] {
             InteractionOutput::Text { text } => assert_eq!(text, "Hello world"),
             _ => panic!("Expected text output"),
         }
-        
+
         mock.assert_async().await;
     }
 
     #[tokio::test]
     async fn test_interaction_send_error_json() {
         let mut server = Server::new_async().await;
-        let mock = server.mock("POST", "/v1beta/interactions")
+        let mock = server
+            .mock("POST", "/v1beta/interactions")
             .with_status(400)
             .with_header("content-type", "application/json")
-            .with_body(json!({
-                "error": {
-                    "code": "invalid_request",
-                    "message": "Missing text in content"
-                }
-            }).to_string())
-            .create_async().await;
+            .with_body(
+                json!({
+                    "error": {
+                        "code": "invalid_request",
+                        "message": "Missing text in content"
+                    }
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
 
         let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
             .with_base_url(server.url());
 
-        let result = client.interaction(InteractionInput::Text("Hi".to_string())).send().await;
-        
+        let result = client
+            .interaction(InteractionInput::Text("Hi".to_string()))
+            .send()
+            .await;
+
         assert!(result.is_err());
         match result.unwrap_err() {
             GeminiError::Api { code, message } => {
                 assert_eq!(code, "400 Bad Request");
                 assert_eq!(message, "Missing text in content");
-            },
+            }
             _ => panic!("Expected Api error"),
         }
-        
+
         mock.assert_async().await;
     }
 
@@ -335,17 +351,20 @@ mod tests {
         let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
             .with_base_url(server.url());
 
-        let result = client.interaction(InteractionInput::Text("Hi".to_string())).send().await;
-        
+        let result = client
+            .interaction(InteractionInput::Text("Hi".to_string()))
+            .send()
+            .await;
+
         assert!(result.is_err());
         match result.unwrap_err() {
             GeminiError::Api { code, message } => {
                 assert_eq!(code, "400 Bad Request");
                 assert_eq!(message, "Request contains an invalid argument.");
-            },
+            }
             _ => panic!("Expected Api error"),
         }
-        
+
         mock.assert_async().await;
     }
 
@@ -361,16 +380,20 @@ mod tests {
         let client = Client::new("test_key".to_string(), "gemini-3-flash-preview".to_string())
             .with_base_url(server.url());
 
-        let stream = client.interaction(InteractionInput::Text("Hi".to_string())).stream().await.unwrap();
+        let stream = client
+            .interaction(InteractionInput::Text("Hi".to_string()))
+            .stream()
+            .await
+            .unwrap();
         tokio::pin!(stream);
-        
+
         let mut deltas = Vec::new();
         while let Some(Ok(InteractionEvent::ContentDelta { delta, .. })) = stream.next().await {
             if let InteractionOutput::Text { text } = delta {
                 deltas.push(text);
             }
         }
-        
+
         assert_eq!(deltas, vec!["hello ", "world"]);
         mock.assert_async().await;
     }
