@@ -1,9 +1,12 @@
-use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use anyhow::Result;
 use crate::bridges::CommBridge;
-use crate::conductor::events::{UserEvent, SystemEvent, SessionState};
+use crate::conductor::events::{SessionState, SystemEvent, UserEvent};
+use anyhow::Result;
+use async_trait::async_trait;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
@@ -11,13 +14,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Terminal,
 };
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 pub struct TuiBridge {
     tx: mpsc::Sender<UserEvent>,
@@ -74,9 +74,9 @@ impl TuiBridge {
         res
     }
 
-    async fn main_loop<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<()> 
-    where 
-        B::Error: std::error::Error + Send + Sync + 'static 
+    async fn main_loop<B: Backend>(&self, terminal: &mut Terminal<B>) -> Result<()>
+    where
+        B::Error: std::error::Error + Send + Sync + 'static,
     {
         loop {
             {
@@ -121,7 +121,13 @@ impl TuiBridge {
                             }
                             KeyCode::Up => {
                                 let i = match state.scroll_state.selected() {
-                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 state.scroll_state.select(Some(i));
@@ -168,46 +174,82 @@ impl TuiBridge {
             " Initializing Chitti... ".to_string()
         };
 
-        let status_widget = Paragraph::new(status_bar)
-            .style(Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD));
+        let status_widget = Paragraph::new(status_bar).style(
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
         f.render_widget(status_widget, chunks[0]);
 
         // 2. Chat Area
-        let messages: Vec<ListItem> = state.messages.iter().map(|m| {
-            let (content, style) = match m {
-                ChatMessage::User(t) => (format!("User: {}", t), Style::default().fg(Color::Cyan)),
-                ChatMessage::Model(t) => (format!("Chitti: {}", t), Style::default().fg(Color::Green)),
-                ChatMessage::Thought(t) => (format!("Thought: {}", t), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-                ChatMessage::System(t) => (format!("System: {}", t), Style::default().fg(Color::Yellow)),
-                ChatMessage::Error(t) => (format!("Error: {}", t), Style::default().fg(Color::Red)),
-                ChatMessage::Tool(t) => (format!("Tool: {}", t), Style::default().fg(Color::Blue).add_modifier(Modifier::ITALIC)),
-                ChatMessage::Debug(t) => (format!("DEBUG: {}", t), Style::default().fg(Color::Magenta).add_modifier(Modifier::DIM)),
-            };
-            ListItem::new(content).style(style)
-        }).collect();
+        let messages: Vec<ListItem> = state
+            .messages
+            .iter()
+            .map(|m| {
+                let (content, style) = match m {
+                    ChatMessage::User(t) => {
+                        (format!("User: {}", t), Style::default().fg(Color::Cyan))
+                    }
+                    ChatMessage::Model(t) => {
+                        (format!("Chitti: {}", t), Style::default().fg(Color::Green))
+                    }
+                    ChatMessage::Thought(t) => (
+                        format!("Thought: {}", t),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                    ChatMessage::System(t) => {
+                        (format!("System: {}", t), Style::default().fg(Color::Yellow))
+                    }
+                    ChatMessage::Error(t) => {
+                        (format!("Error: {}", t), Style::default().fg(Color::Red))
+                    }
+                    ChatMessage::Tool(t) => (
+                        format!("Tool: {}", t),
+                        Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                    ChatMessage::Debug(t) => (
+                        format!("DEBUG: {}", t),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::DIM),
+                    ),
+                };
+                ListItem::new(content).style(style)
+            })
+            .collect();
 
         let list = List::new(messages)
-            .block(Block::default().borders(Borders::ALL).title(" Conversation "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Conversation "),
+            )
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
-        
+
         if state.scroll_state.selected().is_none() && !state.messages.is_empty() {
             let last_idx = state.messages.len().saturating_sub(1);
             state.scroll_state.select(Some(last_idx));
         }
-        
+
         f.render_stateful_widget(list, chunks[1], &mut state.scroll_state);
 
         // 3. Input Box
         let input_widget = Paragraph::new(state.input.as_str())
             .style(Style::default().fg(Color::White))
-            .block(Block::default().borders(Borders::ALL).title(" Input (Esc to exit) "));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Input (Esc to exit) "),
+            );
         f.render_widget(input_widget, chunks[2]);
-        
-        f.set_cursor_position((
-            chunks[2].x + state.input.len() as u16 + 1,
-            chunks[2].y + 1,
-        ));
+
+        f.set_cursor_position((chunks[2].x + state.input.len() as u16 + 1, chunks[2].y + 1));
     }
 }
 
@@ -215,7 +257,7 @@ impl TuiBridge {
 impl CommBridge for TuiBridge {
     async fn send(&self, event: SystemEvent) -> Result<()> {
         let mut state = self.shared_state.lock().unwrap();
-        
+
         match &event {
             SystemEvent::Text(_, s) => state.session_state = Some(s.clone()),
             SystemEvent::Thought(_, s) => state.session_state = Some(s.clone()),
@@ -249,7 +291,8 @@ impl CommBridge for TuiBridge {
                 };
 
                 if should_append {
-                    if let Some(ChatMessage::Thought(ref mut last_text)) = state.messages.last_mut() {
+                    if let Some(ChatMessage::Thought(ref mut last_text)) = state.messages.last_mut()
+                    {
                         last_text.push_str(&text);
                     }
                 } else {
@@ -257,7 +300,9 @@ impl CommBridge for TuiBridge {
                 }
             }
             SystemEvent::ToolCall { name, args, .. } => {
-                state.messages.push(ChatMessage::Tool(format!("Calling {} with {}", name, args)));
+                state
+                    .messages
+                    .push(ChatMessage::Tool(format!("Calling {} with {}", name, args)));
             }
             SystemEvent::Error(err, _) => {
                 state.messages.push(ChatMessage::Error(err));
@@ -269,12 +314,17 @@ impl CommBridge for TuiBridge {
                 state.messages.push(ChatMessage::System(text));
             }
             SystemEvent::RequestApproval { description, .. } => {
-                state.messages.push(ChatMessage::System(format!("APPROVAL REQUIRED: {}", description)));
-                state.messages.push(ChatMessage::System("Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string()));
+                state.messages.push(ChatMessage::System(format!(
+                    "APPROVAL REQUIRED: {}",
+                    description
+                )));
+                state.messages.push(ChatMessage::System(
+                    "Type 'y' to approve, 'n' to reject, or any instruction to steer.".to_string(),
+                ));
             }
             SystemEvent::Ready(_) => {}
         }
-        
+
         if !state.messages.is_empty() {
             let last_idx = state.messages.len().saturating_sub(1);
             state.scroll_state.select(Some(last_idx));

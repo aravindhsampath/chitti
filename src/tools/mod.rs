@@ -1,8 +1,8 @@
+use crate::brains::gemini::types::FunctionDeclaration;
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
-use anyhow::Result;
 use std::collections::HashMap;
-use crate::brains::gemini::types::FunctionDeclaration;
 
 pub mod bash;
 pub mod editor;
@@ -37,15 +37,19 @@ impl ToolRegistry {
     }
 
     pub fn get_definitions(&self) -> Vec<crate::brains::gemini::types::Tool> {
-        self.tools.values().map(|t| {
-            crate::brains::gemini::types::Tool::Function {
-                declaration: t.definition()
-            }
-        }).collect()
+        self.tools
+            .values()
+            .map(|t| crate::brains::gemini::types::Tool::Function {
+                declaration: t.definition(),
+            })
+            .collect()
     }
 
     pub async fn execute(&self, name: &str, args: serde_json::Value) -> Result<ToolResult> {
-        let tool = self.tools.get(name).ok_or_else(|| anyhow::anyhow!("Tool not found: {}", name))?;
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("Tool not found: {}", name))?;
         tool.execute(args).await
     }
 }

@@ -1,8 +1,8 @@
-use reqwest::{Client as HttpClient, Method, RequestBuilder as ReqwestRequestBuilder, Response};
-use tracing::{debug, instrument, warn};
 use crate::brains::gemini::error::GeminiError;
+use reqwest::{Client as HttpClient, Method, RequestBuilder as ReqwestRequestBuilder, Response};
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{debug, instrument, warn};
 
 /// The base Gemini API client.
 #[derive(Clone)]
@@ -43,16 +43,17 @@ impl Client {
     pub fn request(&self, method: Method, path: &str) -> RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
         debug!("Building request: {} {}", method, url);
-        
+
         let request_id = uuid::Uuid::new_v4();
-        let inner = self.http_client
+        let inner = self
+            .http_client
             .request(method.clone(), &url)
             .header("x-goog-api-key", &self.api_key)
             .header("Content-Type", "application/json")
             .header("X-Request-ID", request_id.to_string());
-        RequestBuilder { 
-            inner, 
-            method: method.to_string(), 
+        RequestBuilder {
+            inner,
+            method: method.to_string(),
             url,
             request_id,
         }
@@ -90,7 +91,7 @@ impl RequestBuilder {
         self.inner = self.inner.json(json);
         self
     }
-    
+
     #[allow(dead_code)]
     pub fn body<T: Into<reqwest::Body>>(mut self, body: T) -> Self {
         self.inner = self.inner.body(body);
@@ -109,18 +110,20 @@ impl RequestBuilder {
         let mut attempt = 1;
         let max_retries = 3;
         let mut backoff = Duration::from_secs(1);
-        
+
         // We use Option to handle ownership of the source builder across retry loops
         let mut source = Some(self.inner);
 
         loop {
             // Determine if we can potentially retry after this attempt
             let is_last_attempt = attempt > max_retries;
-            
+
             // prepare the request to send
             let request_to_send = if is_last_attempt {
                 // Last attempt: consume the source
-                source.take().ok_or_else(|| GeminiError::Other("Request builder exhausted".to_string()))?
+                source
+                    .take()
+                    .ok_or_else(|| GeminiError::Other("Request builder exhausted".to_string()))?
             } else {
                 // Not last attempt: try to clone
                 // We need to access source without consuming it yet
@@ -129,7 +132,9 @@ impl RequestBuilder {
                     None => {
                         warn!("Request body is not cloneable, retries disabled for this request");
                         // Can't clone, so we must consume source
-                        source.take().ok_or_else(|| GeminiError::Other("Request builder exhausted".to_string()))?
+                        source.take().ok_or_else(|| {
+                            GeminiError::Other("Request builder exhausted".to_string())
+                        })?
                     }
                 }
             };
@@ -139,7 +144,7 @@ impl RequestBuilder {
                 Ok(response) => {
                     let status = response.status();
                     let headers = response.headers().clone();
-                    
+
                     if let Some(req_id) = headers.get("x-goog-request-id") {
                         debug!(request_id = ?req_id, "Received response from Gemini");
                     }
@@ -151,7 +156,7 @@ impl RequestBuilder {
                     // Check for retryable status codes
                     // We can only retry if we still have the source (i.e., we cloned it)
                     if source.is_some() && (status == 429 || status == 500 || status == 503) {
-                         warn!(
+                        warn!(
                             attempt,
                             status = %status,
                             "Request failed with retryable status, retrying in {:?}...",
@@ -162,7 +167,7 @@ impl RequestBuilder {
                         backoff *= 2;
                         continue;
                     }
-                    
+
                     return Ok(response);
                 }
                 Err(e) => {
@@ -179,7 +184,7 @@ impl RequestBuilder {
                         backoff *= 2;
                         continue;
                     }
-                    
+
                     return Err(GeminiError::Http(e));
                 }
             }

@@ -1,16 +1,21 @@
+use crate::brains::gemini::client::Client;
+use crate::brains::gemini::error::{GeminiError, Result};
+use crate::brains::gemini::types::*;
 use reqwest::Method;
 use std::path::Path;
 use tracing::instrument;
-use crate::brains::gemini::client::Client;
-use crate::brains::gemini::types::*;
-use crate::brains::gemini::error::{GeminiError, Result};
 impl Client {
     /// Uploads a file to the Gemini File API.
     #[instrument(skip(self, path))]
     #[allow(dead_code)]
-    pub async fn upload_file<P: AsRef<Path>>(&self, path: P, display_name: Option<String>) -> Result<File> {
+    pub async fn upload_file<P: AsRef<Path>>(
+        &self,
+        path: P,
+        display_name: Option<String>,
+    ) -> Result<File> {
         let path = path.as_ref();
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
@@ -27,8 +32,12 @@ impl Client {
             }
         });
 
-        let response = self.http_client
-            .request(Method::POST, "https://generativelanguage.googleapis.com/upload/v1beta/files")
+        let response = self
+            .http_client
+            .request(
+                Method::POST,
+                "https://generativelanguage.googleapis.com/upload/v1beta/files",
+            )
             .header("x-goog-api-key", &self.api_key)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
@@ -44,13 +53,15 @@ impl Client {
             let message = response.text().await.unwrap_or_default();
             return Err(GeminiError::Api { code, message });
         }
-        let upload_url = response.headers()
+        let upload_url = response
+            .headers()
             .get("x-goog-upload-url")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| GeminiError::Other("Missing x-goog-upload-url header".to_string()))?
             .to_string();
         // 2. Upload actual bytes
-        let response = self.http_client
+        let response = self
+            .http_client
             .request(Method::POST, &upload_url)
             .header("x-goog-api-key", &self.api_key)
             .header("Content-Length", file_bytes.len())
@@ -66,11 +77,10 @@ impl Client {
             return Err(GeminiError::Api { code, message });
         }
         let result: serde_json::Value = response.json().await?;
-        let file: File = serde_json::from_value(result["file"].clone())
-            .map_err(|e| {
-                tracing::error!("Failed to parse file metadata: {} | Body: {}", e, result);
-                GeminiError::Serde(e)
-            })?;
+        let file: File = serde_json::from_value(result["file"].clone()).map_err(|e| {
+            tracing::error!("Failed to parse file metadata: {} | Body: {}", e, result);
+            GeminiError::Serde(e)
+        })?;
         Ok(file)
     }
     /// Gets metadata for a file.
@@ -82,9 +92,7 @@ impl Client {
         } else {
             format!("/v1beta/files/{}", name)
         };
-        let response = self.request(Method::GET, &path)
-            .send()
-            .await?;
+        let response = self.request(Method::GET, &path).send().await?;
 
         if !response.status().is_success() {
             let code = response.status().as_str().to_string();
@@ -97,7 +105,11 @@ impl Client {
     /// Lists files owned by the project.
     #[instrument(skip(self))]
     #[allow(dead_code)]
-    pub async fn list_files(&self, page_size: Option<u32>, page_token: Option<String>) -> Result<ListFilesResponse> {
+    pub async fn list_files(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<String>,
+    ) -> Result<ListFilesResponse> {
         let mut query = vec![];
         if let Some(ps) = page_size {
             query.push(("pageSize", ps.to_string()));
@@ -105,7 +117,8 @@ impl Client {
         if let Some(pt) = page_token {
             query.push(("pageToken", pt));
         }
-        let response = self.request(Method::GET, "/v1beta/files")
+        let response = self
+            .request(Method::GET, "/v1beta/files")
             .query(&query)
             .send()
             .await?;
@@ -127,9 +140,7 @@ impl Client {
         } else {
             format!("/v1beta/files/{}", name)
         };
-        let response = self.request(Method::DELETE, &path)
-            .send()
-            .await?;
+        let response = self.request(Method::DELETE, &path).send().await?;
 
         if !response.status().is_success() {
             let code = response.status().as_str().to_string();

@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use anyhow::Result;
 use crate::conductor::events::SystemEvent;
+use anyhow::Result;
+use async_trait::async_trait;
 
-pub mod tui;
 pub mod mock;
+pub mod tui;
 
 #[async_trait]
 pub trait CommBridge: Send + Sync {

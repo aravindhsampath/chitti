@@ -1,5 +1,5 @@
-use serde_json::Value;
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -13,10 +13,17 @@ pub enum SystemEvent {
     Text(String, SessionState),
     Thought(String, SessionState),
     Info(String, SessionState),
-    ToolCall { name: String, args: Value, state: SessionState },
+    ToolCall {
+        name: String,
+        args: Value,
+        state: SessionState,
+    },
     Error(String, SessionState),
     Debug(String, SessionState),
-    RequestApproval { description: String, state: SessionState },
+    RequestApproval {
+        description: String,
+        state: SessionState,
+    },
     Ready(SessionState),
 }
 
@@ -36,19 +43,28 @@ pub struct SessionState {
 pub enum BrainEvent {
     TextDelta(String),
     ThoughtDelta(String),
-    ToolCall { name: String, id: String, args: Value },
-    Complete { interaction_id: Option<String> },
+    ThoughtSignature(String),
+    ToolCall {
+        name: String,
+        id: String,
+        args: Value,
+    },
+    Complete {
+        interaction_id: Option<String>,
+    },
     Error(String),
 }
 
+use crate::brains::gemini::types::InteractionInput;
+
 #[derive(Debug, Clone)]
 pub struct TurnContext {
-    pub prompt: String,
+    pub input: InteractionInput,
     pub previous_interaction_id: Option<String>,
-    pub tool_results: Vec<ToolResult>,
     pub streaming: bool,
-    pub memory_enabled: bool,
     pub thinking_level: String,
+    pub memory_enabled: bool,
+    #[allow(dead_code)]
     pub dev_mode: bool,
 }
 

@@ -1,15 +1,19 @@
+use crate::brains::gemini::client::Client;
+use crate::brains::gemini::error::{GeminiError, Result};
+use crate::brains::gemini::types::*;
 use reqwest::Method;
 use tracing::instrument;
-use crate::brains::gemini::client::Client;
-use crate::brains::gemini::types::*;
-use crate::brains::gemini::error::{GeminiError, Result};
 
 impl Client {
     /// Creates a new cached content resource.
     #[instrument(skip(self, cached_content), fields(model = %self.model))]
     #[allow(dead_code)]
-    pub async fn create_cached_content(&self, cached_content: CachedContent) -> Result<CachedContent> {
-        let response = self.request(Method::POST, "/v1beta/cachedContents")
+    pub async fn create_cached_content(
+        &self,
+        cached_content: CachedContent,
+    ) -> Result<CachedContent> {
+        let response = self
+            .request(Method::POST, "/v1beta/cachedContents")
             .json(&cached_content)
             .send()
             .await?;
@@ -17,7 +21,7 @@ impl Client {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse ApiError
             let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
                 api_error.message
@@ -44,14 +48,12 @@ impl Client {
             format!("/v1beta/cachedContents/{}", name)
         };
 
-        let response = self.request(Method::GET, &path)
-            .send()
-            .await?;
+        let response = self.request(Method::GET, &path).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse ApiError
             let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
                 api_error.message
@@ -78,14 +80,12 @@ impl Client {
             format!("/v1beta/cachedContents/{}", name)
         };
 
-        let response = self.request(Method::DELETE, &path)
-            .send()
-            .await?;
+        let response = self.request(Method::DELETE, &path).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse ApiError
             let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
                 api_error.message

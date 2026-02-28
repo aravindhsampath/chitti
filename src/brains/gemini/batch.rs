@@ -1,8 +1,8 @@
+use crate::brains::gemini::client::Client;
+use crate::brains::gemini::error::{GeminiError, Result};
+use crate::brains::gemini::types::*;
 use reqwest::Method;
 use tracing::instrument;
-use crate::brains::gemini::client::Client;
-use crate::brains::gemini::types::*;
-use crate::brains::gemini::error::{GeminiError, Result};
 
 impl Client {
     /// Creates a batch for processing multiple requests.
@@ -15,7 +15,8 @@ impl Client {
             input_config: BatchInputConfig { file_name },
         };
 
-        let response = self.request(Method::POST, &path)
+        let response = self
+            .request(Method::POST, &path)
             .json(&request)
             .send()
             .await?;
@@ -23,7 +24,7 @@ impl Client {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse ApiError
             let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
                 api_error.message
@@ -50,14 +51,12 @@ impl Client {
             format!("/v1beta/batches/{}", name)
         };
 
-        let response = self.request(Method::GET, &path)
-            .send()
-            .await?;
+        let response = self.request(Method::GET, &path).send().await?;
 
         if !response.status().is_success() {
-             let status = response.status();
+            let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse ApiError
             let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&text) {
                 api_error.message

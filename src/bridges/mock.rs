@@ -1,8 +1,8 @@
+use crate::bridges::CommBridge;
+use crate::conductor::events::{SystemEvent, UserEvent};
+use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use anyhow::Result;
-use crate::bridges::CommBridge;
-use crate::conductor::events::{UserEvent, SystemEvent};
 
 #[allow(dead_code)]
 pub struct MockBridge {
@@ -15,7 +15,14 @@ impl MockBridge {
     pub fn new() -> (Self, mpsc::Receiver<UserEvent>, mpsc::Receiver<SystemEvent>) {
         let (tx, rx) = mpsc::channel(100);
         let (stx, srx) = mpsc::channel(100);
-        (Self { tx, system_events: stx }, rx, srx)
+        (
+            Self {
+                tx,
+                system_events: stx,
+            },
+            rx,
+            srx,
+        )
     }
 
     pub async fn simulate_user_message(&self, msg: String) -> Result<()> {

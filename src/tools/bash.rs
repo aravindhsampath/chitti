@@ -1,11 +1,10 @@
-use async_trait::async_trait;
-use serde_json::{Value, json};
-use serde::Deserialize;
-use anyhow::Result;
-use std::collections::HashMap;
-use tokio::process::Command;
-use crate::tools::{ToolExecutor, ToolResult};
 use crate::brains::gemini::types::FunctionDeclaration;
+use crate::tools::{ToolExecutor, ToolResult};
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tokio::process::Command;
 
 pub struct BashTool;
 

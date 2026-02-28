@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
-use anyhow::Result;
 use crate::brains::gemini::types::InteractionTurn;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Session {

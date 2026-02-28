@@ -54,7 +54,9 @@ pub struct FileData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InteractionPart {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Thought {
         #[serde(default)]
         signature: String,
@@ -180,7 +182,7 @@ pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,20 +256,20 @@ pub struct InteractionResponse {
 #[allow(dead_code)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InteractionOutput {
-    Text { 
+    Text {
         #[serde(default)]
-        text: String 
+        text: String,
     },
-    Thought { 
+    Thought {
         #[serde(default)]
         signature: String,
         #[serde(default)]
-        summary: String 
+        summary: String,
     },
     #[serde(rename = "thought_signature")]
-    ThoughtSignature { 
+    ThoughtSignature {
         #[serde(default)]
-        signature: String 
+        signature: String,
     },
     Image(MediaPart),
     Audio(MediaPart),
@@ -278,10 +280,10 @@ pub enum InteractionOutput {
     SearchTool(serde_json::Value),
     GoogleSearchCall(serde_json::Value),
     GoogleSearchResult(serde_json::Value),
-    ContentDelta { 
+    ContentDelta {
         #[serde(default)]
-        text: String, 
-        thought: Option<bool> 
+        text: String,
+        thought: Option<bool>,
     },
     ThoughtSummary {
         #[serde(default)]
@@ -309,12 +311,15 @@ pub enum InteractionEvent {
     #[serde(rename = "interaction.status_update")]
     StatusUpdate { status: String },
     #[serde(rename = "content.start")]
-    ContentStart { 
+    ContentStart {
         index: u32,
         content: ContentStartInfo,
     },
     #[serde(rename = "content.delta")]
-    ContentDelta { delta: InteractionOutput, index: Option<u32> },
+    ContentDelta {
+        delta: InteractionOutput,
+        index: Option<u32>,
+    },
     #[serde(rename = "interaction.complete")]
     InteractionComplete { interaction: InteractionResponse },
     #[serde(other)]
@@ -506,7 +511,7 @@ mod tests {
         };
 
         let json = serde_json::to_value(&request).unwrap();
-        
+
         assert_eq!(json["model"], "models/gemini-1.5-pro");
         assert_eq!(json["cached_content"], "cachedContents/12345");
         assert!(json.get("agent").is_none());
@@ -521,10 +526,46 @@ mod tests {
         };
         let part = InteractionPart::FunctionResponse(resp);
         let json = serde_json::to_value(&part).unwrap();
-        
+
         assert_eq!(json["type"], "function_result");
         assert_eq!(json["call_id"], "call_123");
         assert_eq!(json["name"], "test_func");
         assert_eq!(json["result"]["foo"], "bar");
+    }
+
+    #[test]
+    fn test_interaction_request_full_serialization() {
+        let request = InteractionRequest {
+            model: Some("gemini-3-flash-preview".to_string()),
+            input: InteractionInput::Text("Hello".to_string()),
+            store: Some(true),
+            stream: Some(true),
+            generation_config: Some(GenerationConfig {
+                thinking_level: Some(ThinkingLevel::High),
+                temperature: Some(0.7),
+                ..Default::default()
+            }),
+            cached_content: None,
+            agent: None,
+            system_instruction: None,
+            previous_interaction_id: None,
+            tools: None,
+            tool_choice: None,
+            safety_settings: None,
+            background: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        println!(
+            "Full Request JSON: {}",
+            serde_json::to_string_pretty(&json).unwrap()
+        );
+
+        assert_eq!(json["model"], "gemini-3-flash-preview");
+        assert_eq!(json["input"], "Hello");
+        assert_eq!(json["store"], true);
+        assert_eq!(json["stream"], true);
+        assert_eq!(json["generation_config"]["thinking_level"], "high");
+        assert_eq!(json["generation_config"]["temperature"], 0.7);
     }
 }

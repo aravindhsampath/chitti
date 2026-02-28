@@ -6,7 +6,7 @@ use reqwest::{Method, Response};
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
 #[allow(unused_imports)]
-use tracing::{warn, instrument, debug};
+use tracing::{debug, instrument, warn};
 
 /// A builder for creating interaction requests.
 pub struct InteractionRequestBuilder<'a> {
@@ -72,7 +72,6 @@ impl<'a> InteractionRequestBuilder<'a> {
         self
     }
 
-
     #[allow(dead_code)]
     pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
         self.request.tool_choice = Some(choice);
@@ -103,7 +102,8 @@ impl<'a> InteractionRequestBuilder<'a> {
     #[allow(dead_code)]
     #[instrument(skip(self), fields(model = ?self.request.model))]
     pub async fn send(self) -> Result<InteractionResponse, GeminiError> {
-        let response = self.client
+        let response = self
+            .client
             .request(Method::POST, "/v1beta/interactions")
             .json(&self.request)
             .send()
@@ -111,10 +111,38 @@ impl<'a> InteractionRequestBuilder<'a> {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&error_text) {
-                api_error.message
+            let message = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_text) {
+                if let Some(msg) = json
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                {
+                    msg.to_string()
+                } else if let Some(msg) = json.get("message").and_then(|m| m.as_str()) {
+                    msg.to_string()
+                } else {
+                    error_text.clone()
+                }
+            } else if error_text.starts_with("event: error") {
+                let mut ext_msg = error_text.clone();
+                for line in error_text.lines() {
+                    if line.starts_with("data: ") {
+                        let data = &line["data: ".len()..];
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(msg) = json
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|m| m.as_str())
+                            {
+                                ext_msg = msg.to_string();
+                            }
+                        }
+                        break;
+                    }
+                }
+                ext_msg
             } else {
-                error_text
+                error_text.clone()
             };
 
             return Err(GeminiError::Api {
@@ -123,19 +151,25 @@ impl<'a> InteractionRequestBuilder<'a> {
             });
         }
         let text = response.text().await.map_err(GeminiError::Http)?;
-        let interaction_resp: InteractionResponse = serde_json::from_str(&text)
-            .map_err(|e| {
-                tracing::error!("Failed to parse interaction response: {} | Body: {}", e, text);
-                GeminiError::Serde(e)
-            })?;
+        let interaction_resp: InteractionResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(
+                "Failed to parse interaction response: {} | Body: {}",
+                e,
+                text
+            );
+            GeminiError::Serde(e)
+        })?;
         Ok(interaction_resp)
     }
 
     /// Starts a streaming interaction.
     #[instrument(skip(self), fields(model = ?self.request.model))]
-    pub async fn stream(mut self) -> Result<impl Stream<Item = Result<InteractionEvent, GeminiError>>, GeminiError> {
+    pub async fn stream(
+        mut self,
+    ) -> Result<impl Stream<Item = Result<InteractionEvent, GeminiError>>, GeminiError> {
         self.request.stream = Some(true);
-        let response = self.client
+        let response = self
+            .client
             .request(Method::POST, "/v1beta/interactions")
             .json(&self.request)
             .send()
@@ -143,10 +177,38 @@ impl<'a> InteractionRequestBuilder<'a> {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            let message = if let Ok(api_error) = serde_json::from_str::<ApiError>(&error_text) {
-                api_error.message
+            let message = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&error_text) {
+                if let Some(msg) = json
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                {
+                    msg.to_string()
+                } else if let Some(msg) = json.get("message").and_then(|m| m.as_str()) {
+                    msg.to_string()
+                } else {
+                    error_text.clone()
+                }
+            } else if error_text.starts_with("event: error") {
+                let mut ext_msg = error_text.clone();
+                for line in error_text.lines() {
+                    if line.starts_with("data: ") {
+                        let data = &line["data: ".len()..];
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(msg) = json
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|m| m.as_str())
+                            {
+                                ext_msg = msg.to_string();
+                            }
+                        }
+                        break;
+                    }
+                }
+                ext_msg
             } else {
-                error_text
+                error_text.clone()
             };
 
             return Err(GeminiError::Api {
@@ -158,10 +220,13 @@ impl<'a> InteractionRequestBuilder<'a> {
     }
 }
 
-fn parse_sse_stream(response: Response) -> impl Stream<Item = Result<InteractionEvent, GeminiError>> {
-    let stream = response.bytes_stream()
+fn parse_sse_stream(
+    response: Response,
+) -> impl Stream<Item = Result<InteractionEvent, GeminiError>> {
+    let stream = response
+        .bytes_stream()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
-    
+
     let reader = StreamReader::new(stream);
     let codec = LinesCodec::new();
     let mut reader = FramedRead::new(reader, codec);

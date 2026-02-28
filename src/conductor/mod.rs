@@ -1,13 +1,16 @@
-use anyhow::Result;
-use tokio::sync::mpsc;
-use futures_util::StreamExt;
-use std::sync::Arc;
-use std::collections::VecDeque;
+use crate::brains::gemini::types::{
+    FunctionCall, FunctionResponse, InteractionContent, InteractionInput, InteractionPart,
+    InteractionTurn, Role,
+};
 use crate::brains::BrainEngine;
 use crate::bridges::CommBridge;
-use crate::conductor::events::{UserEvent, SystemEvent, BrainEvent, TurnContext, SessionState};
-use crate::brains::gemini::types::{InteractionInput, InteractionPart, FunctionResponse, InteractionTurn, Role, InteractionContent, FunctionCall};
+use crate::conductor::events::{BrainEvent, SessionState, SystemEvent, TurnContext, UserEvent};
 use crate::tools::ToolRegistry;
+use anyhow::Result;
+use futures_util::StreamExt;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 pub mod events;
 pub mod session;
@@ -23,7 +26,7 @@ pub struct Conductor {
     session: Session,
     session_path: PathBuf,
     pending_steering: VecDeque<String>,
-    
+
     // UI Metadata
     streaming: bool,
     pwd: String,
@@ -32,20 +35,14 @@ pub struct Conductor {
 
 impl Conductor {
     pub fn new(
-        brain: Box<dyn BrainEngine>, 
-        bridge: Arc<dyn CommBridge>, 
+        brain: Box<dyn BrainEngine>,
+        bridge: Arc<dyn CommBridge>,
         events_rx: mpsc::Receiver<UserEvent>,
         tools: Arc<ToolRegistry>,
         model: String,
         dev_mode: bool,
+        session_path: PathBuf,
     ) -> Self {
-        let session_dir = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(".chitti");
-        
-        let session_path = session_dir.join("session.json");
-        
         let mut conductor = Self {
             brain,
             bridge,
@@ -76,16 +73,14 @@ impl Conductor {
         self.pwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
-        
+
         use std::process::Command;
         let output = Command::new("git")
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .output();
-        
+
         self.git_branch = match output {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
-            }
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => "no-git".to_string(),
         };
     }
@@ -112,16 +107,34 @@ impl Conductor {
                         self.session.interaction_id = None;
                         self.session.turns.clear();
                         let _ = self.session.save(&self.session_path).await;
-                        self.bridge.send(SystemEvent::Info("Context cleared.".to_string(), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                "Context cleared.".to_string(),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                     "/stream" => {
                         self.streaming = !self.streaming;
-                        self.bridge.send(SystemEvent::Info(format!("Streaming is now {}", if self.streaming {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                format!(
+                                    "Streaming is now {}",
+                                    if self.streaming { "ON" } else { "OFF" }
+                                ),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                     "/thinking" if parts.len() > 1 => {
                         self.session.thinking_level = parts[1].to_string();
                         let _ = self.session.save(&self.session_path).await;
-                        self.bridge.send(SystemEvent::Info(format!("Thinking level set to {}", self.session.thinking_level), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                format!("Thinking level set to {}", self.session.thinking_level),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                     "/memory" => {
                         self.session.memory_enabled = !self.session.memory_enabled;
@@ -129,7 +142,19 @@ impl Conductor {
                             self.session.interaction_id = None;
                         }
                         let _ = self.session.save(&self.session_path).await;
-                        self.bridge.send(SystemEvent::Info(format!("Session memory is now {}", if self.session.memory_enabled {"ON"} else {"OFF"}), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                format!(
+                                    "Session memory is now {}",
+                                    if self.session.memory_enabled {
+                                        "ON"
+                                    } else {
+                                        "OFF"
+                                    }
+                                ),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                     "/help" | "/" => {
                         let help_text = "Available Commands:\n\
@@ -139,17 +164,34 @@ impl Conductor {
                               /clear           - Clear conversation context\n\
                               /exit | /quit    - Exit Chitti\n\
                               /help | /        - Show this help menu";
-                        self.bridge.send(SystemEvent::Info(help_text.to_string(), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                help_text.to_string(),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                     _ => {
-                        self.bridge.send(SystemEvent::Error(format!("Unknown command: {}", parts[0]), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Error(
+                                format!("Unknown command: {}", parts[0]),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
                 }
             } else {
                 if let Err(e) = self.handle_conversation(input).await {
                     tracing::error!("Conversation error: {:?}", e);
-                    let _ = self.bridge.send(SystemEvent::Error(format!("Conversation Error: {:?}", e), self.get_state_snapshot())).await;
+                    let _ = self
+                        .bridge
+                        .send(SystemEvent::Error(
+                            format!("Conversation Error: {:?}", e),
+                            self.get_state_snapshot(),
+                        ))
+                        .await;
                     self.session.interaction_id = None;
+                    let _ = self.session.save(&self.session_path).await;
                 }
             }
         }
@@ -158,8 +200,12 @@ impl Conductor {
 
     async fn handle_conversation(&mut self, initial_prompt: String) -> Result<()> {
         // The active_interaction_id tracks the parent ID for follow-ups *within* this interaction loop.
-        let mut active_interaction_id = if self.session.memory_enabled { self.session.interaction_id.clone() } else { None };
-        
+        let mut active_interaction_id = if self.session.memory_enabled {
+            self.session.interaction_id.clone()
+        } else {
+            None
+        };
+
         let mut next_input = InteractionInput::Text(initial_prompt);
 
         loop {
@@ -194,7 +240,11 @@ impl Conductor {
                     }
                     InteractionInput::Turns(self.session.turns.clone())
                 },
-                previous_interaction_id: if self.session.memory_enabled { active_interaction_id.clone() } else { None },
+                previous_interaction_id: if self.session.memory_enabled {
+                    active_interaction_id.clone()
+                } else {
+                    None
+                },
                 streaming: self.streaming,
                 thinking_level: self.session.thinking_level.clone(),
                 memory_enabled: self.session.memory_enabled,
@@ -202,7 +252,12 @@ impl Conductor {
             };
 
             if self.session.dev_mode {
-                self.bridge.send(SystemEvent::Debug(format!("TurnContext Sent: {:#?}", context), self.get_state_snapshot())).await?;
+                self.bridge
+                    .send(SystemEvent::Debug(
+                        format!("TurnContext Sent: {:#?}", context),
+                        self.get_state_snapshot(),
+                    ))
+                    .await?;
             }
 
             // 3. Request Turn
@@ -213,33 +268,48 @@ impl Conductor {
             while let Some(brain_res) = brain_stream.next().await {
                 let event = brain_res?;
                 if self.session.dev_mode {
-                    self.bridge.send(SystemEvent::Debug(format!("Brain Event: {:#?}", event), self.get_state_snapshot())).await?;
+                    self.bridge
+                        .send(SystemEvent::Debug(
+                            format!("Brain Event: {:#?}", event),
+                            self.get_state_snapshot(),
+                        ))
+                        .await?;
                 }
 
                 match event {
                     BrainEvent::TextDelta(text) => {
-                        self.bridge.send(SystemEvent::Text(text.clone(), self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Text(text.clone(), self.get_state_snapshot()))
+                            .await?;
                         model_response_parts.push(InteractionPart::Text { text });
                     }
                     BrainEvent::ThoughtDelta(thought) => {
-                        self.bridge.send(SystemEvent::Thought(thought, self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Thought(thought, self.get_state_snapshot()))
+                            .await?;
                     }
                     BrainEvent::ThoughtSignature(sig) => {
-                        model_response_parts.push(InteractionPart::Thought { 
-                            signature: sig, 
-                            summary: String::new() 
+                        model_response_parts.push(InteractionPart::Thought {
+                            signature: sig,
+                            summary: String::new(),
                         });
                     }
                     BrainEvent::ToolCall { name, id, args } => {
-                        self.bridge.send(SystemEvent::ToolCall { name: name.clone(), args: args.clone(), state: self.get_state_snapshot() }).await?;
-                        
+                        self.bridge
+                            .send(SystemEvent::ToolCall {
+                                name: name.clone(),
+                                args: args.clone(),
+                                state: self.get_state_snapshot(),
+                            })
+                            .await?;
+
                         model_response_parts.push(InteractionPart::FunctionCall(FunctionCall {
                             id: Some(id.clone()),
                             name: name.clone(),
                             args: args.clone(),
                             thought_signature: None,
                         }));
-                        
+
                         tool_calls.push((name, id, args));
                     }
                     BrainEvent::Complete { interaction_id } => {
@@ -252,7 +322,9 @@ impl Conductor {
                         }
                     }
                     BrainEvent::Error(err) => {
-                        self.bridge.send(SystemEvent::Error(err, self.get_state_snapshot())).await?;
+                        self.bridge
+                            .send(SystemEvent::Error(err, self.get_state_snapshot()))
+                            .await?;
                     }
                 }
             }
@@ -267,7 +339,9 @@ impl Conductor {
 
             if tool_calls.is_empty() {
                 self.session.save(&self.session_path).await?;
-                self.bridge.send(SystemEvent::Ready(self.get_state_snapshot())).await?;
+                self.bridge
+                    .send(SystemEvent::Ready(self.get_state_snapshot()))
+                    .await?;
                 break;
             }
 
@@ -275,16 +349,33 @@ impl Conductor {
             let mut results_parts = Vec::new();
             for (name, id, args) in tool_calls {
                 let description = format!("Execute tool '{}' with args: {}", name, args);
-                self.bridge.send(SystemEvent::RequestApproval { description, state: self.get_state_snapshot() }).await?;
+                self.bridge
+                    .send(SystemEvent::RequestApproval {
+                        description,
+                        state: self.get_state_snapshot(),
+                    })
+                    .await?;
 
                 let mut approved = false;
                 while let Some(UserEvent::Input(input)) = self.events_rx.recv().await {
                     match input.to_lowercase().as_str() {
-                        "y" | "yes" => { approved = true; break; }
-                        "n" | "no" => { approved = false; break; }
+                        "y" | "yes" => {
+                            approved = true;
+                            break;
+                        }
+                        "n" | "no" => {
+                            approved = false;
+                            break;
+                        }
                         _ => {
                             self.pending_steering.push_back(input);
-                            self.bridge.send(SystemEvent::Text("[Steering noted. Waiting for tool approval/rejection...]".to_string(), self.get_state_snapshot())).await?;
+                            self.bridge
+                                .send(SystemEvent::Text(
+                                    "[Steering noted. Waiting for tool approval/rejection...]"
+                                        .to_string(),
+                                    self.get_state_snapshot(),
+                                ))
+                                .await?;
                         }
                     }
                 }
@@ -294,7 +385,12 @@ impl Conductor {
                         Ok(res) => {
                             self.refresh_system_metadata();
                             if self.session.dev_mode {
-                                self.bridge.send(SystemEvent::Debug(format!("Tool Result: {:#?}", res), self.get_state_snapshot())).await?;
+                                self.bridge
+                                    .send(SystemEvent::Debug(
+                                        format!("Tool Result: {:#?}", res),
+                                        self.get_state_snapshot(),
+                                    ))
+                                    .await?;
                             }
                             res.output
                         }
@@ -322,7 +418,7 @@ impl Conductor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conductor::events::{BrainEvent, UserEvent, SystemEvent, TurnContext};
+    use crate::conductor::events::{BrainEvent, SystemEvent, TurnContext, UserEvent};
     use async_trait::async_trait;
     use futures_util::stream;
     use std::sync::Mutex;
@@ -334,12 +430,17 @@ mod tests {
 
     #[async_trait]
     impl BrainEngine for MockBrain {
-        async fn process_turn(&self, context: TurnContext) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
+        async fn process_turn(
+            &self,
+            context: TurnContext,
+        ) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
             self.calls.lock().unwrap().push(context);
             let id = format!("id_{}", self.calls.lock().unwrap().len());
             Ok(Box::pin(stream::iter(vec![
                 Ok(BrainEvent::TextDelta("hello".to_string())),
-                Ok(BrainEvent::Complete { interaction_id: Some(id) }),
+                Ok(BrainEvent::Complete {
+                    interaction_id: Some(id),
+                }),
             ])))
         }
     }
@@ -359,16 +460,28 @@ mod tests {
     #[tokio::test]
     async fn test_conductor_state_persistence() -> Result<()> {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let brain = Box::new(MockBrain { calls: calls.clone() });
+        let brain = Box::new(MockBrain {
+            calls: calls.clone(),
+        });
         let sent = Arc::new(Mutex::new(Vec::new()));
         let bridge = Arc::new(TestBridge { sent: sent.clone() });
         let (tx, rx) = mpsc::channel(10);
-        let mut conductor = Conductor::new(brain, bridge, rx, Arc::new(ToolRegistry::new()), "test-model".to_string(), false);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
+        let mut conductor = Conductor::new(
+            brain,
+            bridge,
+            rx,
+            Arc::new(ToolRegistry::new()),
+            "test-model".to_string(),
+            false,
+            temp_path.clone(),
+        );
 
         tx.send(UserEvent::Input("ping".to_string())).await?;
         conductor.handle_conversation("ping".to_string()).await?;
         assert_eq!(conductor.session.interaction_id, Some("id_1".to_string()));
-        
+
         conductor.handle_conversation("pong".to_string()).await?;
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
@@ -383,17 +496,28 @@ mod tests {
 
     #[async_trait]
     impl BrainEngine for ToolMockBrain {
-        async fn process_turn(&self, context: TurnContext) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
+        async fn process_turn(
+            &self,
+            context: TurnContext,
+        ) -> Result<futures_util::stream::BoxStream<'static, Result<BrainEvent>>> {
             self.calls.lock().unwrap().push(context);
             if self.calls.lock().unwrap().len() == 1 {
                 Ok(Box::pin(stream::iter(vec![
-                    Ok(BrainEvent::ToolCall { name: "test_tool".to_string(), id: "call_1".to_string(), args: serde_json::json!({}) }),
-                    Ok(BrainEvent::Complete { interaction_id: Some("id_1".to_string()) }),
+                    Ok(BrainEvent::ToolCall {
+                        name: "test_tool".to_string(),
+                        id: "call_1".to_string(),
+                        args: serde_json::json!({}),
+                    }),
+                    Ok(BrainEvent::Complete {
+                        interaction_id: Some("id_1".to_string()),
+                    }),
                 ])))
             } else {
                 Ok(Box::pin(stream::iter(vec![
                     Ok(BrainEvent::TextDelta("ok".to_string())),
-                    Ok(BrainEvent::Complete { interaction_id: Some("id_2".to_string()) }),
+                    Ok(BrainEvent::Complete {
+                        interaction_id: Some("id_2".to_string()),
+                    }),
                 ])))
             }
         }
@@ -403,20 +527,33 @@ mod tests {
     async fn test_conductor_steering_injection() -> Result<()> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel(10);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
         let mut conductor = Conductor::new(
-            Box::new(ToolMockBrain { calls: calls.clone() }), 
-            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
-            rx, 
+            Box::new(ToolMockBrain {
+                calls: calls.clone(),
+            }),
+            Arc::new(TestBridge {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+            rx,
             Arc::new(ToolRegistry::new()),
             "test-model".to_string(),
-            false
+            false,
+            temp_path.clone(),
         );
 
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("actually do X".to_string())).await.unwrap();
-            tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
+            tx_clone
+                .send(UserEvent::Input("actually do X".to_string()))
+                .await
+                .unwrap();
+            tx_clone
+                .send(UserEvent::Input("y".to_string()))
+                .await
+                .unwrap();
         });
 
         conductor.handle_conversation("start".to_string()).await?;
@@ -429,20 +566,30 @@ mod tests {
     async fn test_conductor_private_mode_stateless_replay() -> Result<()> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel(10);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
         let mut conductor = Conductor::new(
-            Box::new(ToolMockBrain { calls: calls.clone() }), 
-            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
-            rx, 
+            Box::new(ToolMockBrain {
+                calls: calls.clone(),
+            }),
+            Arc::new(TestBridge {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+            rx,
             Arc::new(ToolRegistry::new()),
             "test-model".to_string(),
-            false
+            false,
+            temp_path.clone(),
         );
 
         conductor.session.memory_enabled = false;
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("y".to_string())).await.unwrap();
+            tx_clone
+                .send(UserEvent::Input("y".to_string()))
+                .await
+                .unwrap();
         });
 
         conductor.handle_conversation("start".to_string()).await?;
@@ -450,7 +597,7 @@ mod tests {
         assert_eq!(history.len(), 2);
         match &history[1].input {
             InteractionInput::Turns(turns) => {
-                assert_eq!(turns.len(), 3); 
+                assert_eq!(turns.len(), 3);
                 assert_eq!(turns[0].role, Role::User);
                 assert_eq!(turns[1].role, Role::Model);
                 assert_eq!(turns[2].role, Role::User);
@@ -463,22 +610,32 @@ mod tests {
     #[tokio::test]
     async fn test_conductor_clear_command() -> Result<()> {
         let (tx, rx) = mpsc::channel(10);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
         let mut conductor = Conductor::new(
-            Box::new(MockBrain { calls: Arc::new(Mutex::new(Vec::new())) }), 
-            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
-            rx, 
+            Box::new(MockBrain {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }),
+            Arc::new(TestBridge {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+            rx,
             Arc::new(ToolRegistry::new()),
             "test-model".to_string(),
-            false
+            false,
+            temp_path.clone(),
         );
 
         conductor.session.interaction_id = Some("existing".to_string());
         tx.send(UserEvent::Input("/clear".to_string())).await?;
-        
+
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("/exit".to_string())).await.unwrap();
+            tx_clone
+                .send(UserEvent::Input("/exit".to_string()))
+                .await
+                .unwrap();
         });
 
         conductor.run().await?;
@@ -491,19 +648,29 @@ mod tests {
     async fn test_conductor_tool_rejection() -> Result<()> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel(10);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
         let mut conductor = Conductor::new(
-            Box::new(ToolMockBrain { calls: calls.clone() }), 
-            Arc::new(TestBridge { sent: Arc::new(Mutex::new(Vec::new())) }), 
-            rx, 
+            Box::new(ToolMockBrain {
+                calls: calls.clone(),
+            }),
+            Arc::new(TestBridge {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+            rx,
             Arc::new(ToolRegistry::new()),
             "test-model".to_string(),
-            false
+            false,
+            temp_path.clone(),
         );
 
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("n".to_string())).await.unwrap();
+            tx_clone
+                .send(UserEvent::Input("n".to_string()))
+                .await
+                .unwrap();
         });
 
         conductor.handle_conversation("start".to_string()).await?;
@@ -517,31 +684,37 @@ mod tests {
     async fn test_conductor_help_command() -> Result<()> {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel(10);
+        let temp_path =
+            std::env::temp_dir().join(format!("chitti_test_{}.json", uuid::Uuid::new_v4()));
         let mut conductor = Conductor::new(
-            Box::new(MockBrain { calls: Arc::new(Mutex::new(Vec::new())) }), 
-            Arc::new(TestBridge { sent: sent.clone() }), 
-            rx, 
+            Box::new(MockBrain {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }),
+            Arc::new(TestBridge { sent: sent.clone() }),
+            rx,
             Arc::new(ToolRegistry::new()),
             "test-model".to_string(),
-            false
+            false,
+            temp_path.clone(),
         );
 
         tx.send(UserEvent::Input("/".to_string())).await?;
-        
+
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx_clone.send(UserEvent::Input("/exit".to_string())).await.unwrap();
+            tx_clone
+                .send(UserEvent::Input("/exit".to_string()))
+                .await
+                .unwrap();
         });
 
         conductor.run().await?;
 
         let sent_events = sent.lock().unwrap();
-        let help_sent = sent_events.iter().any(|e| {
-            match e {
-                SystemEvent::Info(text, _) => text.contains("Available Commands"),
-                _ => false,
-            }
+        let help_sent = sent_events.iter().any(|e| match e {
+            SystemEvent::Info(text, _) => text.contains("Available Commands"),
+            _ => false,
         });
         assert!(help_sent);
         Ok(())

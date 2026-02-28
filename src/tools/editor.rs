@@ -1,10 +1,10 @@
-use async_trait::async_trait;
-use serde_json::{Value, json};
-use anyhow::Result;
-use serde::Deserialize;
-use std::path::PathBuf;
-use crate::tools::{ToolExecutor, ToolResult};
 use crate::brains::gemini::types::FunctionDeclaration;
+use crate::tools::{ToolExecutor, ToolResult};
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::path::PathBuf;
 
 pub struct EditorTool;
 
@@ -25,7 +25,8 @@ impl ToolExecutor for EditorTool {
     fn definition(&self) -> FunctionDeclaration {
         FunctionDeclaration {
             name: self.name(),
-            description: "Read, write, or list files and directories on the local system.".to_string(),
+            description: "Read, write, or list files and directories on the local system."
+                .to_string(),
             parameters: Some(json!({
                 "type": "object",
                 "properties": {
@@ -53,41 +54,49 @@ impl ToolExecutor for EditorTool {
         let path = PathBuf::from(&editor_args.path);
 
         let (output, is_error) = match editor_args.operation.as_str() {
-            "read" => {
-                match tokio::fs::read_to_string(&path).await {
-                    Ok(content) => (json!({ "content": content }), false),
-                    Err(e) => (json!({ "error": format!("Failed to read file: {}", e) }), true),
-                }
-            }
+            "read" => match tokio::fs::read_to_string(&path).await {
+                Ok(content) => (json!({ "content": content }), false),
+                Err(e) => (
+                    json!({ "error": format!("Failed to read file: {}", e) }),
+                    true,
+                ),
+            },
             "write" => {
                 if let Some(content) = editor_args.content {
                     match tokio::fs::write(&path, content).await {
                         Ok(_) => (json!({ "status": "success" }), false),
-                        Err(e) => (json!({ "error": format!("Failed to write file: {}", e) }), true),
+                        Err(e) => (
+                            json!({ "error": format!("Failed to write file: {}", e) }),
+                            true,
+                        ),
                     }
                 } else {
-                    (json!({ "error": "Missing 'content' for write operation" }), true)
+                    (
+                        json!({ "error": "Missing 'content' for write operation" }),
+                        true,
+                    )
                 }
             }
-            "list" => {
-                match tokio::fs::read_dir(&path).await {
-                    Ok(mut entries) => {
-                        let mut files = Vec::new();
-                        while let Some(entry) = entries.next_entry().await? {
-                            files.push(entry.file_name().to_string_lossy().to_string());
-                        }
-                        (json!({ "entries": files }), false)
+            "list" => match tokio::fs::read_dir(&path).await {
+                Ok(mut entries) => {
+                    let mut files = Vec::new();
+                    while let Some(entry) = entries.next_entry().await? {
+                        files.push(entry.file_name().to_string_lossy().to_string());
                     }
-                    Err(e) => (json!({ "error": format!("Failed to list directory: {}", e) }), true),
+                    (json!({ "entries": files }), false)
                 }
-            }
-            _ => (json!({ "error": format!("Unknown operation: {}", editor_args.operation) }), true),
+                Err(e) => (
+                    json!({ "error": format!("Failed to list directory: {}", e) }),
+                    true,
+                ),
+            },
+            _ => (
+                json!({ "error": format!("Unknown operation: {}", editor_args.operation) }),
+                true,
+            ),
         };
 
-        Ok(ToolResult {
-            output,
-            is_error,
-        })
+        Ok(ToolResult { output, is_error })
     }
 }
 

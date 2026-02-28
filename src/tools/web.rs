@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use serde_json::{Value, json};
-use anyhow::Result;
-use serde::Deserialize;
-use crate::tools::{ToolExecutor, ToolResult};
 use crate::brains::gemini::types::FunctionDeclaration;
+use crate::tools::{ToolExecutor, ToolResult};
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 pub struct WebTool;
 
@@ -38,34 +38,28 @@ impl ToolExecutor for WebTool {
     async fn execute(&self, args: Value) -> Result<ToolResult> {
         let web_args: WebArgs = serde_json::from_value(args)?;
         let client = reqwest::Client::new();
-        
+
         match client.get(&web_args.url).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 match resp.text().await {
-                    Ok(body) => {
-                        Ok(ToolResult {
-                            output: json!({
-                                "status": status.as_u16(),
-                                "body": body
-                            }),
-                            is_error: !status.is_success(),
-                        })
-                    }
-                    Err(e) => {
-                        Ok(ToolResult {
-                            output: json!({ "error": format!("Failed to read response body: {}", e) }),
-                            is_error: true,
-                        })
-                    }
+                    Ok(body) => Ok(ToolResult {
+                        output: json!({
+                            "status": status.as_u16(),
+                            "body": body
+                        }),
+                        is_error: !status.is_success(),
+                    }),
+                    Err(e) => Ok(ToolResult {
+                        output: json!({ "error": format!("Failed to read response body: {}", e) }),
+                        is_error: true,
+                    }),
                 }
             }
-            Err(e) => {
-                Ok(ToolResult {
-                    output: json!({ "error": format!("Failed to fetch URL: {}", e) }),
-                    is_error: true,
-                })
-            }
+            Err(e) => Ok(ToolResult {
+                output: json!({ "error": format!("Failed to fetch URL: {}", e) }),
+                is_error: true,
+            }),
         }
     }
 }

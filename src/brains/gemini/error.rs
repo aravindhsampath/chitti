@@ -1,14 +1,11 @@
-use thiserror::Error;
 use crate::brains::gemini::types::ApiError;
+use thiserror::Error;
 use tokio_util::codec::LinesCodecError;
 
 #[derive(Error, Debug)]
 pub enum GeminiError {
     #[error("API Error: {message} (code: {code})")]
-    Api {
-        code: String,
-        message: String,
-    },
+    Api { code: String, message: String },
     #[error("HTTP Error: {0}")]
     Http(#[from] reqwest::Error),
     #[error("Serialization Error: {0}")]

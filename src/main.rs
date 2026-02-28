@@ -1,23 +1,24 @@
 use anyhow::{Context, Result};
 use dotenvy::dotenv;
-use tracing::{info, warn, Level};
-use tracing_subscriber::FmtSubscriber;
 use std::env;
 use std::sync::Arc;
+use tracing::{info, warn, Level};
+use tracing_subscriber::FmtSubscriber;
 
-mod config;
 mod brains;
 mod bridges;
 mod conductor;
+mod config;
 mod tools;
 
-use brains::gemini::adapter::GeminiEngine;
-use bridges::tui::TuiBridge;
-use bridges::CommBridge;
-use conductor::Conductor;
-use tools::ToolRegistry;
-use tools::bash::BashTool;
-use tools::editor::EditorTool;
+use crate::brains::gemini::adapter::GeminiEngine;
+use crate::bridges::tui::TuiBridge;
+use crate::bridges::CommBridge;
+use crate::conductor::Conductor;
+use crate::tools::bash::BashTool;
+use crate::tools::editor::EditorTool;
+use crate::tools::web::WebTool;
+use crate::tools::ToolRegistry;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,9 +28,12 @@ async fn main() -> Result<()> {
 
     // 2. Load Configuration
     if let Err(e) = dotenv() {
-        warn!("No .env file found or error reading it: {}. Using environment variables.", e);
+        warn!(
+            "No .env file found or error reading it: {}. Using environment variables.",
+            e
+        );
     }
-    
+
     let config = config::Config::from_env().context("Failed to load configuration")?;
     info!("Chitti initialized with model: {}", config.gemini_model);
 
@@ -43,14 +47,28 @@ async fn main() -> Result<()> {
     // 4. Initialize Components
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client, tools.clone()));
-    
+
     let (tui, rx) = TuiBridge::new();
     let bridge = Arc::new(tui);
 
     // 5. Start the Conductor
-    let mut conductor = Conductor::new(brain, bridge.clone(), rx, tools.clone(), config.gemini_model, config.dev_mode);
+    let session_dir = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".chitti");
+    let session_path = session_dir.join("session.json");
+
+    let mut conductor = Conductor::new(
+        brain,
+        bridge.clone(),
+        rx,
+        tools.clone(),
+        config.gemini_model,
+        config.dev_mode,
+        session_path,
+    );
     conductor.init().await?;
-    
+
     // Send an initial empty message or system event to sync the UI state
     bridge.send(crate::conductor::events::SystemEvent::Text(
         "Welcome to Chitti! Type your message or a command (e.g., /stream, /thinking, /exit).\n".to_string(),
@@ -80,9 +98,7 @@ fn setup_logging() -> Result<()> {
         _ => Level::INFO,
     };
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .finish();
+    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
 
     tracing::subscriber::set_global_default(subscriber)
         .context("Setting default subscriber failed")?;
