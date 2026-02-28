@@ -19,6 +19,7 @@ pub enum SystemEvent {
         state: SessionState,
     },
     Error(String, SessionState),
+    Debug(String, SessionState),
     RequestApproval {
         description: String,
         state: SessionState,
@@ -30,6 +31,7 @@ pub enum SystemEvent {
 pub struct SessionState {
     pub model: String,
     pub thinking_level: String,
+    pub dev_mode: bool,
     pub streaming: bool,
     pub memory_enabled: bool,
     pub pwd: String,

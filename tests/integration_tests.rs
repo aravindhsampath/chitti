@@ -1,7 +1,6 @@
-use anyhow::Result;
 use chitti::brains::gemini::{
-    CachedContent, Client, Content, FunctionCall, InteractionContent, InteractionEvent,
-    InteractionInput, InteractionOutput, InteractionPart, InteractionTurn, Part, Role, Tool,
+    CachedContent, Client, Content, FunctionCall, InteractionEvent, InteractionInput,
+    InteractionOutput, InteractionPart, Part, Role, Tool,
 };
 
 use dotenvy::dotenv;

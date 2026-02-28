@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     let bridge = Arc::new(tui);
 
     // 3. Start the Conductor
-    let mut conductor = Conductor::new(brain, bridge.clone(), rx);
+    let mut conductor = Conductor::new(brain, bridge.clone(), rx, config.dev_mode);
 
     // Send an initial empty message or system event to sync the UI state
     bridge.send(crate::conductor::events::SystemEvent::Text(

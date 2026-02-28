@@ -24,12 +24,14 @@ pub struct Conductor {
     thinking_level: String,
     pwd: String,
     git_branch: String,
+    dev_mode: bool,
 }
 impl Conductor {
     pub fn new(
         brain: Box<dyn BrainEngine>,
         bridge: Arc<dyn CommBridge>,
         events_rx: mpsc::Receiver<UserEvent>,
+        dev_mode: bool,
     ) -> Self {
         let mut conductor = Self {
             brain,
@@ -41,6 +43,7 @@ impl Conductor {
             thinking_level: "high".to_string(),
             pwd: String::new(),
             git_branch: String::new(),
+            dev_mode,
         };
         conductor.refresh_system_metadata();
         conductor
@@ -69,6 +72,7 @@ impl Conductor {
             memory_enabled: true,
             pwd: self.pwd.clone(),
             git_branch: self.git_branch.clone(),
+            dev_mode: self.dev_mode,
         }
     }
 
@@ -283,7 +287,7 @@ impl Conductor {
                 }
 
                 let result = if approved {
-                    if name == "ls" {
+                    let res = if name == "ls" {
                         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                         match std::fs::read_dir(path) {
                             Ok(entries) => {
@@ -297,7 +301,16 @@ impl Conductor {
                         }
                     } else {
                         serde_json::json!({ "error": format!("Tool {} not implemented", name) })
+                    };
+                    if self.dev_mode {
+                        self.bridge
+                            .send(SystemEvent::Debug(
+                                format!("Tool Result: {:#?}", res),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
                     }
+                    res
                 } else {
                     serde_json::json!({ "error": "User rejected tool execution." })
                 };
