@@ -9,8 +9,10 @@ mod brains;
 mod bridges;
 mod conductor;
 mod config;
+use crate::config::UiMode;
 use crate::brains::gemini::adapter::GeminiEngine;
 use crate::bridges::tui::TuiBridge;
+use crate::bridges::web::WebBridge;
 use crate::bridges::CommBridge;
 use crate::conductor::Conductor;
 #[tokio::main]
@@ -33,27 +35,47 @@ async fn main() -> Result<()> {
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client));
 
-    let (tui, rx) = TuiBridge::new();
-    let bridge = Arc::new(tui);
+    match config.ui_mode {
+        UiMode::Tui => {
+            let (tui, rx) = TuiBridge::new();
+            let bridge = Arc::new(tui);
 
-    // 3. Start the Conductor
-    let mut conductor = Conductor::new(brain, bridge.clone(), rx, config.dev_mode);
+            let mut conductor = Conductor::new(brain, bridge.clone(), rx, config.dev_mode);
 
-    // Send an initial empty message or system event to sync the UI state
-    bridge.send(crate::conductor::events::SystemEvent::Text(
-        "Welcome to Chitti! Type your message or a command (e.g., /stream, /thinking, /exit).\n".to_string(),
-        conductor.get_state_snapshot()
-    )).await?;
+            bridge.send(crate::conductor::events::SystemEvent::Text(
+                "Welcome to Chitti! Type your message or a command (e.g., /stream, /thinking, /exit).\n".to_string(),
+                conductor.get_state_snapshot()
+            )).await?;
 
-    // Spawn Conductor
-    tokio::spawn(async move {
-        if let Err(e) = conductor.run().await {
-            tracing::error!("Conductor error: {:?}", e);
+            tokio::spawn(async move {
+                if let Err(e) = conductor.run().await {
+                    tracing::error!("Conductor error: {:?}", e);
+                }
+            });
+
+            bridge.run_ui_loop().await?;
         }
-    });
+        UiMode::Web => {
+            let (web_bridge, rx_user, tx_user) = WebBridge::new();
+            let bridge = Arc::new(web_bridge);
 
-    // Start UI loop (this will block until exit)
-    bridge.run_ui_loop().await?;
+            let mut conductor = Conductor::new(brain, bridge.clone(), rx_user, config.dev_mode);
+
+            bridge.send(crate::conductor::events::SystemEvent::Text(
+                "Welcome to Chitti Web UI! Type your message.\n".to_string(),
+                conductor.get_state_snapshot()
+            )).await?;
+
+            tokio::spawn(async move {
+                if let Err(e) = conductor.run().await {
+                    tracing::error!("Conductor error: {:?}", e);
+                }
+            });
+
+            // Start the web server loop (blocks until exit)
+            bridge.run_server(tx_user).await?;
+        }
+    }
 
     Ok(())
 }

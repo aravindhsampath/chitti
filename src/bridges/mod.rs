@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 pub mod mock;
 pub mod tui;
+pub mod web;
 
 #[async_trait]
 pub trait CommBridge: Send + Sync {

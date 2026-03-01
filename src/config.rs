@@ -1,13 +1,19 @@
 use anyhow::{Context, Result};
 use std::env;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum UiMode {
+    Tui,
+    Web,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub gemini_api_key: String,
     pub gemini_model: String,
     pub dev_mode: bool,
+    pub ui_mode: UiMode,
 }
-
 impl Config {
     pub fn from_env() -> Result<Self> {
         let api_key = env::var("GEMINI_API_KEY")
@@ -19,10 +25,18 @@ impl Config {
             .map(|v| v.to_lowercase() == "true")
             .unwrap_or(true);
 
+        let ui_mode = env::var("UI_MODE")
+            .map(|v| match v.to_lowercase().as_str() {
+                "web" => UiMode::Web,
+                _ => UiMode::Tui,
+            })
+            .unwrap_or(UiMode::Tui);
+
         Ok(Self {
             gemini_api_key: api_key,
             gemini_model: model,
             dev_mode,
+            ui_mode,
         })
     }
 }
