@@ -151,6 +151,7 @@ impl<'a> InteractionRequestBuilder<'a> {
             });
         }
         let text = response.text().await.map_err(GeminiError::Http)?;
+        tracing::debug!(body = %text, "Received raw interaction response");
         let interaction_resp: InteractionResponse = serde_json::from_str(&text).map_err(|e| {
             tracing::error!(
                 "Failed to parse interaction response: {} | Body: {}",

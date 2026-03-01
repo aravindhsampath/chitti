@@ -112,16 +112,30 @@ impl BrainEngine for GeminiEngine {
             for output in response.outputs {
                 match output {
                     crate::brains::gemini::types::InteractionOutput::Text { text } => {
-                        events.push(Ok(BrainEvent::TextDelta(text)));
+                        if !text.is_empty() {
+                            events.push(Ok(BrainEvent::TextDelta(text)));
+                        }
+                    }
+                    crate::brains::gemini::types::InteractionOutput::Thought {
+                        signature, ..
+                    } => {
+                        events.push(Ok(BrainEvent::ThoughtSignature(signature)));
+                    }
+                    crate::brains::gemini::types::InteractionOutput::ThoughtSignature {
+                        signature,
+                    } => {
+                        events.push(Ok(BrainEvent::ThoughtSignature(signature)));
                     }
                     crate::brains::gemini::types::InteractionOutput::ContentDelta {
                         text,
                         thought,
                     } => {
-                        if thought.unwrap_or(false) {
-                            events.push(Ok(BrainEvent::ThoughtDelta(text)));
-                        } else {
-                            events.push(Ok(BrainEvent::TextDelta(text)));
+                        if !text.is_empty() {
+                            if thought.unwrap_or(false) {
+                                events.push(Ok(BrainEvent::ThoughtDelta(text)));
+                            } else {
+                                events.push(Ok(BrainEvent::TextDelta(text)));
+                            }
                         }
                     }
                     crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
