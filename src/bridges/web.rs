@@ -7,7 +7,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     routing::get,
     Router,
 };
@@ -41,9 +41,7 @@ impl WebBridge {
         });
 
         let app = Router::new()
-            .route("/", get(index_html))
-            .route("/style.css", get(style_css))
-            .route("/app.js", get(app_js))
+            .route("/", get(|| async { "Chitti WebSocket Server" }))
             .route("/ws", get(ws_handler))
             .layer(CorsLayer::permissive())
             .with_state(state);
@@ -64,22 +62,7 @@ impl CommBridge for WebBridge {
     }
 }
 
-async fn index_html() -> Html<&'static str> {
-    Html(include_str!("../../web/index.html"))
-}
-
-async fn style_css() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "text/css")], include_str!("../../web/style.css"))
-}
-
-async fn app_js() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_str!("../../web/app.js"))
-}
-
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
@@ -99,12 +82,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
     let tx_user = state.tx_user.clone();
     let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            let text = text.to_string();
-            if text.trim() == "/memory" {
-                 let _ = tx_user.send(UserEvent::ToggleMemory).await;
-            } else {
-                 let _ = tx_user.send(UserEvent::Input(text)).await;
+        while let Some(msg_result) = receiver.next().await {
+            tracing::info!("WS MSG RECV: {:?}", msg_result);
+            if let Ok(Message::Text(text)) = msg_result {
+                let text = text.to_string();
+                if text.trim() == "/memory" {
+                    let _ = tx_user.send(UserEvent::ToggleMemory).await;
+                } else {
+                    let _ = tx_user.send(UserEvent::Input(text)).await;
+                }
             }
         }
     });

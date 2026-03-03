@@ -9,12 +9,12 @@ mod brains;
 mod bridges;
 mod conductor;
 mod config;
-use crate::config::UiMode;
 use crate::brains::gemini::adapter::GeminiEngine;
 use crate::bridges::tui::TuiBridge;
 use crate::bridges::web::WebBridge;
 use crate::bridges::CommBridge;
 use crate::conductor::Conductor;
+use crate::config::UiMode;
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Initialize Logging
@@ -61,10 +61,12 @@ async fn main() -> Result<()> {
 
             let mut conductor = Conductor::new(brain, bridge.clone(), rx_user, config.dev_mode);
 
-            bridge.send(crate::conductor::events::SystemEvent::Text(
-                "Welcome to Chitti Web UI! Type your message.\n".to_string(),
-                conductor.get_state_snapshot()
-            )).await?;
+            bridge
+                .send(crate::conductor::events::SystemEvent::Text(
+                    "Welcome to Chitti Web UI! Type your message.\n".to_string(),
+                    conductor.get_state_snapshot(),
+                ))
+                .await?;
 
             tokio::spawn(async move {
                 if let Err(e) = conductor.run().await {
