@@ -11,14 +11,22 @@ use crate::conductor::events::{
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::{stream::BoxStream, StreamExt};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct GeminiEngine {
     client: Client,
+    active_cache: Arc<RwLock<Option<(u64, String)>>>,
 }
 
 impl GeminiEngine {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            active_cache: Arc::new(RwLock::new(None)),
+        }
     }
 }
 #[async_trait]
@@ -61,9 +69,59 @@ impl BrainEngine for GeminiEngine {
             });
 
         if let Some(instruction) = context.system_instruction {
-            builder = builder.system_instruction(
-                crate::brains::gemini::types::InteractionContent::from(instruction),
-            );
+            let mut hasher = DefaultHasher::new();
+            instruction.hash(&mut hasher);
+            let current_hash = hasher.finish();
+
+            let mut current_cache = None;
+            {
+                let cache_lock = self.active_cache.read().await;
+                if let Some((hash, name)) = cache_lock.as_ref() {
+                    if *hash == current_hash {
+                        current_cache = Some(name.clone());
+                    }
+                }
+            }
+
+            if current_cache.is_none() {
+                let content = crate::brains::gemini::types::Content {
+                    role: None,
+                    parts: vec![crate::brains::gemini::types::Part {
+                        text: Some(instruction.clone()),
+                        ..Default::default()
+                    }],
+                };
+                let new_cache = crate::brains::gemini::types::CachedContent {
+                    name: None,
+                    model: format!("models/{}", self.client.model),
+                    contents: None,
+                    system_instruction: Some(content),
+                    tools: None,
+                    ttl: Some("3600s".to_string()),
+                    expire_time: None,
+                };
+                match self.client.create_cached_content(new_cache).await {
+                    Ok(cached) => {
+                        if let Some(name) = cached.name {
+                            tracing::info!("Created new context cache: {}", name);
+                            let mut cache_lock = self.active_cache.write().await;
+                            *cache_lock = Some((current_hash, name.clone()));
+                            current_cache = Some(name);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create cache: {}. Falling back to inline.", e);
+                    }
+                }
+            }
+
+            if let Some(cache_name) = current_cache {
+                builder = builder.cached_content(cache_name);
+            } else {
+                builder = builder.system_instruction(
+                    crate::brains::gemini::types::InteractionContent::from(instruction),
+                );
+            }
         }
 
         if let Some(id) = context.previous_interaction_id {
@@ -258,5 +316,77 @@ fn convert_part(part: &MessagePart) -> Option<InteractionPart> {
                 response,
             }))
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conductor::events::ConversationInput;
+    use mockito::Server;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_caching_fallback_and_creation() {
+        let mut server = Server::new_async().await;
+        let mock_cache = server
+            .mock("POST", "/v1beta/cachedContents")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({ "name": "cachedContents/mock123", "model": "models/test" }).to_string(),
+            )
+            .create_async()
+            .await;
+
+        let mock_interaction = server
+            .mock("POST", "/v1beta/interactions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "model": "gemini-3-flash-preview",
+                    "status": "completed",
+                    "outputs": [{ "type": "text", "text": "hello" }]
+                })
+                .to_string(),
+            )
+            .expect(2)
+            .create_async()
+            .await;
+
+        let client = Client::new("key".into(), "model".into()).with_base_url(server.url());
+        let engine = GeminiEngine::new(client);
+
+        let mut context = TurnContext {
+            input: ConversationInput::Text("hi".into()),
+            previous_interaction_id: None,
+            streaming: false,
+            thinking_level: "low".into(),
+            memory_enabled: true,
+            system_instruction: Some("test instruction".into()),
+        };
+
+        // First turn should create cache
+        let _ = engine.process_turn(context.clone()).await.unwrap();
+        mock_cache.assert_async().await;
+
+        // Second turn should reuse cache (cache mock not hit again, interaction mock hit again)
+        let _ = engine.process_turn(context.clone()).await.unwrap();
+        mock_interaction.assert_async().await;
+
+        // Third turn with DIFFERENT instruction should create NEW cache
+        let mock_cache_2 = server
+            .mock("POST", "/v1beta/cachedContents")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({ "name": "cachedContents/mock456", "model": "models/test" }).to_string(),
+            )
+            .create_async()
+            .await;
+
+        context.system_instruction = Some("new test instruction".into());
+        let _ = engine.process_turn(context.clone()).await.unwrap();
+        mock_cache_2.assert_async().await;
     }
 }
