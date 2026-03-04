@@ -25,6 +25,7 @@ pub struct Conductor {
     memory_enabled: bool,
     pub soul_path: std::path::PathBuf,
     pub memory_path: std::path::PathBuf,
+    pub db: Arc<crate::memory::db::Db>,
     turns: Vec<ConversationTurn>,
     pwd: String,
     git_branch: String,
@@ -39,6 +40,7 @@ impl Conductor {
         dev_mode: bool,
         soul_path: std::path::PathBuf,
         memory_path: std::path::PathBuf,
+        db: Arc<crate::memory::db::Db>,
     ) -> Self {
         let mut conductor = Self {
             brain,
@@ -51,6 +53,7 @@ impl Conductor {
             memory_enabled: true,
             soul_path,
             memory_path,
+            db,
             turns: Vec::new(),
             pwd: String::new(),
             git_branch: String::new(),
@@ -187,12 +190,21 @@ impl Conductor {
         };
 
         let mut current_turn_history = Vec::new();
-        current_turn_history.push(ConversationTurn {
+        let initial_turn = ConversationTurn {
             role: MessageRole::User,
             parts: vec![MessagePart::Text {
                 text: initial_prompt.clone(),
             }],
-        });
+        };
+
+        if let Ok(json) = serde_json::to_string(&initial_turn.parts) {
+            let _ = self
+                .db
+                .insert_audit_log("default", "default", "user", &json, "[]")
+                .await;
+        }
+
+        current_turn_history.push(initial_turn);
 
         let mut next_input = ConversationInput::Text(initial_prompt);
         loop {
@@ -322,10 +334,17 @@ impl Conductor {
             }
 
             if !model_response_parts.is_empty() {
-                current_turn_history.push(ConversationTurn {
+                let model_turn = ConversationTurn {
                     role: MessageRole::Model,
                     parts: model_response_parts,
-                });
+                };
+                if let Ok(json) = serde_json::to_string(&model_turn.parts) {
+                    let _ = self
+                        .db
+                        .insert_audit_log("default", "default", "model", &json, "[]")
+                        .await;
+                }
+                current_turn_history.push(model_turn);
             }
 
             if tool_calls.is_empty() {
@@ -410,10 +429,17 @@ impl Conductor {
                     payload: result_payload,
                 }));
             }
-            current_turn_history.push(ConversationTurn {
+            let tool_turn = ConversationTurn {
                 role: MessageRole::User,
                 parts: results_parts.clone(),
-            });
+            };
+            if let Ok(json) = serde_json::to_string(&tool_turn.parts) {
+                let _ = self
+                    .db
+                    .insert_audit_log("default", "default", "tool", &json, "[]")
+                    .await;
+            }
+            current_turn_history.push(tool_turn);
             next_input = ConversationInput::Parts(results_parts);
         }
         if self.memory_enabled {
@@ -483,6 +509,7 @@ mod tests {
             false,
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
+            Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
         );
 
         conductor
@@ -579,6 +606,7 @@ mod tests {
             false,
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
+            Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
         );
 
         conductor.memory_enabled = false;
@@ -641,6 +669,7 @@ mod tests {
             false,
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
+            Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
         );
 
         conductor.interaction_id = Some("existing".to_string());
@@ -682,6 +711,7 @@ mod tests {
             false,
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
+            Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
         );
 
         let tx_clone = tx.clone();
@@ -717,6 +747,7 @@ mod tests {
             false,
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
+            Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
         );
         conductor.streaming = false;
 

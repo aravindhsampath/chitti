@@ -9,6 +9,7 @@ mod brains;
 mod bridges;
 mod conductor;
 mod config;
+mod memory;
 use crate::brains::gemini::adapter::GeminiEngine;
 use crate::bridges::tui::TuiBridge;
 use crate::bridges::web::WebBridge;
@@ -32,6 +33,12 @@ async fn main() -> Result<()> {
     let config = config::Config::from_env().context("Failed to load configuration")?;
     info!("Chitti initialized with model: {}", config.gemini_model);
 
+    let db = Arc::new(
+        crate::memory::db::Db::open("chitti.db")
+            .await
+            .context("Failed to open DB")?,
+    );
+
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client));
 
@@ -47,6 +54,7 @@ async fn main() -> Result<()> {
                 config.dev_mode,
                 config.soul_path.clone(),
                 config.memory_path.clone(),
+                db.clone(),
             );
 
             bridge.send(crate::conductor::events::SystemEvent::Text(
@@ -73,6 +81,7 @@ async fn main() -> Result<()> {
                 config.dev_mode,
                 config.soul_path.clone(),
                 config.memory_path.clone(),
+                db.clone(),
             );
 
             bridge

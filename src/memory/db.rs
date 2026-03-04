@@ -25,10 +25,37 @@ impl Db {
         let conn = AsyncConnection::open_in_memory().await?;
 
         conn.call(|conn| Ok(Self::init_schema(conn)?)).await?;
-
         Ok(Self { conn })
     }
 
+    pub async fn insert_audit_log(
+        &self,
+        channel_id: &str,
+        topic_id: &str,
+        role: &str,
+        content: &str,
+        artifact_paths: &str,
+    ) -> Result<i64> {
+        let channel_id = channel_id.to_owned();
+        let topic_id = topic_id.to_owned();
+        let role = role.to_owned();
+        let content = content.to_owned();
+        let artifact_paths = artifact_paths.to_owned();
+
+        let id = self
+            .conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO audit_logs (channel_id, topic_id, role, content, artifact_paths)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![channel_id, topic_id, role, content, artifact_paths],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })
+            .await?;
+
+        Ok(id)
+    }
     fn init_schema(conn: &mut Connection) -> rusqlite::Result<()> {
         let tx = conn.transaction()?;
 
