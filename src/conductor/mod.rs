@@ -229,12 +229,31 @@ impl Conductor {
                 memory_enabled: self.memory_enabled,
             };
 
+            if self.dev_mode {
+                self.bridge
+                    .send(SystemEvent::Debug(
+                        format!("TurnContext Sent: {:#?}", context),
+                        self.get_state_snapshot(),
+                    ))
+                    .await?;
+            }
+
             let mut brain_stream = self.brain.process_turn(context).await?;
             let mut tool_calls = Vec::new();
             let mut model_response_parts = Vec::new();
 
             while let Some(brain_res) = brain_stream.next().await {
                 let event = brain_res?;
+
+                if self.dev_mode {
+                    self.bridge
+                        .send(SystemEvent::Debug(
+                            format!("Brain Event: {:#?}", event),
+                            self.get_state_snapshot(),
+                        ))
+                        .await?;
+                }
+
                 match event {
                     BrainEvent::TextDelta(text) => {
                         self.bridge
