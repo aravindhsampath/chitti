@@ -39,11 +39,16 @@ async fn main() -> Result<()> {
             .context("Failed to open DB")?,
     );
 
-    let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
+    let client =
+        brains::gemini::Client::new(config.gemini_api_key.clone(), config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client));
 
     let (memory_tx, memory_rx) = tokio::sync::mpsc::channel(100);
-    let manager = crate::memory::manager::MemoryManager::new(db.clone(), memory_rx);
+    let manager = crate::memory::manager::MemoryManager::new(
+        db.clone(),
+        memory_rx,
+        config.gemini_api_key.clone(),
+    );
     tokio::spawn(async move {
         manager.run().await;
     });
