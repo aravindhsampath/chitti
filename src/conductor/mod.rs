@@ -30,6 +30,7 @@ pub struct Conductor {
     pwd: String,
     git_branch: String,
     dev_mode: bool,
+    pub active_topic_id: String,
 }
 
 impl Conductor {
@@ -58,6 +59,7 @@ impl Conductor {
             pwd: String::new(),
             git_branch: String::new(),
             dev_mode,
+            active_topic_id: "default".to_string(),
         };
         conductor.refresh_system_metadata();
         conductor
@@ -103,6 +105,23 @@ impl Conductor {
                         self.bridge
                             .send(SystemEvent::Info(
                                 "Context cleared.".to_string(),
+                                self.get_state_snapshot(),
+                            ))
+                            .await?;
+                    }
+                    "/new" if parts.len() > 1 => {
+                        let topic_name = parts[1..].join(" ");
+                        let topic_id = uuid::Uuid::new_v4().to_string();
+                        self.active_topic_id = topic_id.clone();
+                        // "default" channel_id for now
+                        let _ = self.db.create_topic(&topic_id, "default").await;
+
+                        self.interaction_id = None;
+                        self.turns.clear();
+
+                        self.bridge
+                            .send(SystemEvent::Info(
+                                format!("Switched to new topic: {}", topic_name),
                                 self.get_state_snapshot(),
                             ))
                             .await?;
@@ -200,7 +219,7 @@ impl Conductor {
         if let Ok(json) = serde_json::to_string(&initial_turn.parts) {
             let _ = self
                 .db
-                .insert_audit_log("default", "default", "user", &json, "[]")
+                .insert_audit_log("default", &self.active_topic_id, "user", &json, "[]")
                 .await;
         }
 
@@ -341,7 +360,7 @@ impl Conductor {
                 if let Ok(json) = serde_json::to_string(&model_turn.parts) {
                     let _ = self
                         .db
-                        .insert_audit_log("default", "default", "model", &json, "[]")
+                        .insert_audit_log("default", &self.active_topic_id, "model", &json, "[]")
                         .await;
                 }
                 current_turn_history.push(model_turn);
@@ -436,7 +455,7 @@ impl Conductor {
             if let Ok(json) = serde_json::to_string(&tool_turn.parts) {
                 let _ = self
                     .db
-                    .insert_audit_log("default", "default", "tool", &json, "[]")
+                    .insert_audit_log("default", &self.active_topic_id, "tool", &json, "[]")
                     .await;
             }
             current_turn_history.push(tool_turn);
@@ -763,6 +782,53 @@ mod tests {
             .any(|e| matches!(e, SystemEvent::Ready(_)));
         assert!(has_text, "Should have sent Text event");
         assert!(has_ready, "Should have sent Ready event");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_conductor_new_topic_command() -> Result<()> {
+        let (tx, rx) = mpsc::channel(10);
+        let db = Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap());
+        let mut conductor = Conductor::new(
+            Box::new(MockBrain {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }),
+            Arc::new(TestBridge {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+            rx,
+            false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
+            db,
+        );
+
+        conductor.interaction_id = Some("existing".to_string());
+        conductor.turns.push(ConversationTurn {
+            role: MessageRole::User,
+            parts: vec![MessagePart::Text {
+                text: "test".to_string(),
+            }],
+        });
+        let old_topic = conductor.active_topic_id.clone();
+
+        tx.send(UserEvent::Input("/new My shiny new topic".to_string()))
+            .await?;
+
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx_clone
+                .send(UserEvent::Input("/exit".to_string()))
+                .await
+                .unwrap();
+        });
+
+        conductor.run().await?;
+
+        assert_eq!(conductor.interaction_id, None);
+        assert!(conductor.turns.is_empty());
+        assert_ne!(conductor.active_topic_id, old_topic);
         Ok(())
     }
 }

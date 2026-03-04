@@ -28,6 +28,22 @@ impl Db {
         Ok(Self { conn })
     }
 
+    pub async fn create_topic(&self, topic_id: &str, channel_id: &str) -> Result<()> {
+        let topic_id = topic_id.to_owned();
+        let channel_id = channel_id.to_owned();
+
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO topics (id, channel_id, topic_summary, last_summarized_log_id) VALUES (?1, ?2, '', 0)",
+                    rusqlite::params![topic_id, channel_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+
+        Ok(())
+    }
     pub async fn insert_audit_log(
         &self,
         channel_id: &str,
