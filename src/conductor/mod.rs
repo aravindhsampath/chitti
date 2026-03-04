@@ -269,12 +269,56 @@ impl Conductor {
                 }
             }
 
+            let mut modified_input = if self.memory_enabled {
+                next_input.clone()
+            } else {
+                ConversationInput::Turns(current_turn_history.clone())
+            };
+
+            if self.memory_enabled {
+                let mut prefix = String::new();
+                if let Ok(Some(topic_state)) =
+                    self.db.fetch_topic_state(&self.active_topic_id).await
+                {
+                    if !topic_state.summary.is_empty() {
+                        prefix.push_str(&format!("Topic Summary:\n{}\n\n", topic_state.summary));
+                    }
+                    if let Ok(logs) = self
+                        .db
+                        .fetch_unsummarized_logs(
+                            &self.active_topic_id,
+                            topic_state.last_summarized_log_id,
+                        )
+                        .await
+                    {
+                        if !logs.is_empty() {
+                            prefix.push_str("Recent Unsummarized Messages:\n");
+                            for log in logs {
+                                prefix.push_str(&format!("{}: {}\n", log.role, log.content));
+                            }
+                            prefix.push('\n');
+                        }
+                    }
+                }
+                if !prefix.is_empty() {
+                    match &mut modified_input {
+                        ConversationInput::Text(t) => {
+                            *t = format!("{}\n{}", prefix, t);
+                        }
+                        ConversationInput::Parts(p) => {
+                            p.insert(0, MessagePart::Text { text: prefix });
+                        }
+                        ConversationInput::Turns(turns) => {
+                            if !turns.is_empty() {
+                                turns[0].parts.insert(0, MessagePart::Text { text: prefix });
+                            }
+                        }
+                    }
+                }
+            }
+
             let context = TurnContext {
-                input: if self.memory_enabled {
-                    next_input.clone()
-                } else {
-                    ConversationInput::Turns(current_turn_history.clone())
-                },
+                input: modified_input,
                 previous_interaction_id: active_interaction_id.clone(),
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),

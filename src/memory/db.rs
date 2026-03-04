@@ -9,6 +9,22 @@ pub struct Db {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
+pub struct TopicState {
+    pub id: String,
+    pub summary: String,
+    pub last_summarized_log_id: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct AuditLog {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+}
+
+#[allow(dead_code)]
 impl Db {
     /// Opens the database at the given path and runs schema initialization.
     pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -71,6 +87,56 @@ impl Db {
             .await?;
 
         Ok(id)
+    }
+
+    pub async fn fetch_topic_state(&self, topic_id: &str) -> Result<Option<TopicState>> {
+        let topic_id = topic_id.to_owned();
+        let res = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, topic_summary, last_summarized_log_id FROM topics WHERE id = ?1",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![topic_id])?;
+                if let Some(row) = rows.next()? {
+                    Ok(Some(TopicState {
+                        id: row.get(0)?,
+                        summary: row.get(1)?,
+                        last_summarized_log_id: row.get(2)?,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?;
+        Ok(res)
+    }
+
+    pub async fn fetch_unsummarized_logs(
+        &self,
+        topic_id: &str,
+        last_summarized_log_id: i64,
+    ) -> Result<Vec<AuditLog>> {
+        let topic_id = topic_id.to_owned();
+        let logs = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare("SELECT id, role, content FROM audit_logs WHERE topic_id = ?1 AND id > ?2 ORDER BY id ASC")?;
+                let rows = stmt.query_map(rusqlite::params![topic_id, last_summarized_log_id], |row| {
+                    Ok(AuditLog {
+                        id: row.get(0)?,
+                        role: row.get(1)?,
+                        content: row.get(2)?,
+                    })
+                })?;
+                let mut result = Vec::new();
+                for row in rows {
+                    result.push(row?);
+                }
+                Ok(result)
+            })
+            .await?;
+        Ok(logs)
     }
     fn init_schema(conn: &mut Connection) -> rusqlite::Result<()> {
         let tx = conn.transaction()?;
