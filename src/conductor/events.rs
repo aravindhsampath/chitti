@@ -17,6 +17,7 @@ pub enum MessageRole {
 #[serde(tag = "tool", content = "args")]
 pub enum ToolCallPayload {
     Ls { path: Option<String> },
+    UpdateCoreMemory { action: String, content: String },
     Unknown { name: String, raw_args: String },
 }
 
@@ -24,6 +25,11 @@ impl std::fmt::Display for ToolCallPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ToolCallPayload::Ls { path } => write!(f, "ls path={:?}", path),
+            ToolCallPayload::UpdateCoreMemory { action, content } => write!(
+                f,
+                "update_core_memory action={} content={}",
+                action, content
+            ),
             ToolCallPayload::Unknown { name, raw_args } => write!(f, "{} args={}", name, raw_args),
         }
     }
@@ -36,6 +42,9 @@ pub enum ToolResponsePayload {
         entries: Result<Vec<String>, String>,
     },
     Unknown {
+        result: String,
+    },
+    UpdateCoreMemory {
         result: String,
     },
 }

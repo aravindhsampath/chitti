@@ -55,7 +55,7 @@ impl MemoryManager {
                             }
 
                             let mut prompt = String::new();
-                            prompt.push_str("Merge the following recent messages into the existing topic summary to create a new, concise summary. Only return the new summary text.\n\n");
+                            prompt.push_str("Merge the following recent messages into the existing topic summary to create a new, concise summary. Only return the new summary text. If the user states a new permanent fact, preference, or rule, use the update_core_memory tool to save it.\n\n");
                             prompt.push_str("EXISTING SUMMARY:\n");
                             prompt.push_str(&topic_state.summary);
                             prompt.push_str("\n\nRECENT MESSAGES:\n");
@@ -87,6 +87,25 @@ impl MemoryManager {
                                     )) = res
                                     {
                                         new_summary.push_str(&text);
+                                    } else if let Ok(
+                                        crate::conductor::events::BrainEvent::ToolCall(tool_call),
+                                    ) = res
+                                    {
+                                        if let crate::conductor::events::ToolCallPayload::UpdateCoreMemory { action, content } = tool_call.payload {
+                                            tracing::info!("MemoryManager: Updating core memory (action: {})", action);
+                                            let mem_path = std::path::PathBuf::from("MEMORY.md");
+                                            if action == "append" {
+                                                if let Ok(mut current) = std::fs::read_to_string(&mem_path) {
+                                                    current.push('\n');
+                                                    current.push_str(&content);
+                                                    let _ = std::fs::write(&mem_path, current);
+                                                } else {
+                                                    let _ = std::fs::write(&mem_path, content);
+                                                }
+                                            } else if action == "rewrite" {
+                                                let _ = std::fs::write(&mem_path, content);
+                                            }
+                                        }
                                     }
                                 }
 

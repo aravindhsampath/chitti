@@ -484,6 +484,11 @@ impl Conductor {
                                 },
                             }
                         }
+                        ToolCallPayload::UpdateCoreMemory { .. } => {
+                            ToolResponsePayload::UpdateCoreMemory {
+                                result: "Core memory update acknowledged.".to_string(),
+                            }
+                        }
                         ToolCallPayload::Unknown { name, .. } => ToolResponsePayload::Unknown {
                             result: format!("Tool {} not implemented", name),
                         },

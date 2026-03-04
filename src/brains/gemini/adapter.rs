@@ -141,7 +141,21 @@ impl BrainEngine for GeminiEngine {
                 })),
             },
         };
-        builder = builder.tools(vec![ls_tool]);
+        let update_core_memory_tool = crate::brains::gemini::types::Tool::Function {
+            declaration: crate::brains::gemini::types::FunctionDeclaration {
+                name: "update_core_memory".to_string(),
+                description: "Update the core MEMORY.md file with new permanent facts or preferences. Use this when the user explicitly states a preference, a rule, or a fact that should be remembered across all future conversations.".to_string(),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["append", "rewrite"] },
+                        "content": { "type": "string" }
+                    },
+                    "required": ["action", "content"]
+                })),
+            },
+        };
+        builder = builder.tools(vec![ls_tool, update_core_memory_tool]);
         if context.streaming {
             let stream = builder.stream().await?;
 
@@ -173,6 +187,11 @@ impl BrainEngine for GeminiEngine {
                                         let payload = if fc.name == "ls" {
                                             ToolCallPayload::Ls {
                                                 path: fc.args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                            }
+                                        } else if fc.name == "update_core_memory" {
+                                            ToolCallPayload::UpdateCoreMemory {
+                                                action: fc.args.get("action").and_then(|v| v.as_str()).unwrap_or("append").to_string(),
+                                                content: fc.args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                             }
                                         } else {
                                             ToolCallPayload::Unknown {
@@ -249,6 +268,21 @@ impl BrainEngine for GeminiEngine {
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string()),
                             }
+                        } else if fc.name == "update_core_memory" {
+                            ToolCallPayload::UpdateCoreMemory {
+                                action: fc
+                                    .args
+                                    .get("action")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("append")
+                                    .to_string(),
+                                content: fc
+                                    .args
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            }
                         } else {
                             ToolCallPayload::Unknown {
                                 name: fc.name,
@@ -287,6 +321,21 @@ fn convert_part(part: &MessagePart) -> Option<InteractionPart> {
                     }
                     ("ls".to_string(), serde_json::Value::Object(obj))
                 }
+                ToolCallPayload::UpdateCoreMemory { action, content } => {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert(
+                        "action".to_string(),
+                        serde_json::Value::String(action.clone()),
+                    );
+                    obj.insert(
+                        "content".to_string(),
+                        serde_json::Value::String(content.clone()),
+                    );
+                    (
+                        "update_core_memory".to_string(),
+                        serde_json::Value::Object(obj),
+                    )
+                }
                 ToolCallPayload::Unknown { name, raw_args } => {
                     let parsed = serde_json::from_str(raw_args).unwrap_or(serde_json::Value::Null);
                     (name.clone(), parsed)
@@ -307,6 +356,10 @@ fn convert_part(part: &MessagePart) -> Option<InteractionPart> {
                 },
                 ToolResponsePayload::Unknown { result } => (
                     "unknown".to_string(),
+                    serde_json::json!({ "result": result }),
+                ),
+                ToolResponsePayload::UpdateCoreMemory { result } => (
+                    "update_core_memory".to_string(),
                     serde_json::json!({ "result": result }),
                 ),
             };
