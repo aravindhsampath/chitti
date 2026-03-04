@@ -1,6 +1,13 @@
+use crate::brains::gemini::types::{
+    FunctionCall, FunctionResponse, InteractionContent, InteractionInput, InteractionPart,
+    InteractionTurn, Role,
+};
 use crate::brains::gemini::Client;
 use crate::brains::BrainEngine;
-use crate::conductor::events::{BrainEvent, TurnContext};
+use crate::conductor::events::{
+    BrainEvent, ConversationInput, MessagePart, MessageRole, ToolCall, ToolCallPayload,
+    ToolResponsePayload, TurnContext,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::{stream::BoxStream, StreamExt};
@@ -20,9 +27,31 @@ impl BrainEngine for GeminiEngine {
         &self,
         context: TurnContext,
     ) -> Result<BoxStream<'static, Result<BrainEvent>>> {
+        let interaction_input = match &context.input {
+            ConversationInput::Text(t) => InteractionInput::Text(t.clone()),
+            ConversationInput::Parts(p) => {
+                InteractionInput::Parts(p.iter().filter_map(convert_part).collect())
+            }
+            ConversationInput::Turns(turns) => InteractionInput::Turns(
+                turns
+                    .iter()
+                    .map(|t| InteractionTurn {
+                        role: match t.role {
+                            MessageRole::User => Role::User,
+                            MessageRole::Model => Role::Model,
+                            MessageRole::Tool => Role::Tool,
+                        },
+                        content: InteractionContent(
+                            t.parts.iter().filter_map(convert_part).collect(),
+                        ),
+                    })
+                    .collect(),
+            ),
+        };
+
         let mut builder = self
             .client
-            .interaction(context.input)
+            .interaction(interaction_input)
             .store(context.memory_enabled)
             .thinking_level(match context.thinking_level.to_lowercase().as_str() {
                 "minimal" => crate::brains::gemini::types::ThinkingLevel::Minimal,
@@ -77,11 +106,20 @@ impl BrainEngine for GeminiEngine {
                                         }
                                     }
                                     crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
-                                        Ok(BrainEvent::ToolCall {
-                                            name: fc.name,
+                                        let payload = if fc.name == "ls" {
+                                            ToolCallPayload::Ls {
+                                                path: fc.args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                            }
+                                        } else {
+                                            ToolCallPayload::Unknown {
+                                                name: fc.name,
+                                                raw_args: serde_json::to_string(&fc.args).unwrap_or_default(),
+                                            }
+                                        };
+                                        Ok(BrainEvent::ToolCall(ToolCall {
                                             id: fc.id.unwrap_or_default(),
-                                            args: serde_json::to_value(fc.args).unwrap_or_default()
-                                        })
+                                            payload,
+                                        }))
                                     }
                                     _ => {
                                         // Skip other output types without yielding Complete
@@ -139,11 +177,24 @@ impl BrainEngine for GeminiEngine {
                         }
                     }
                     crate::brains::gemini::types::InteractionOutput::FunctionCall(fc) => {
-                        events.push(Ok(BrainEvent::ToolCall {
-                            name: fc.name,
+                        let payload = if fc.name == "ls" {
+                            ToolCallPayload::Ls {
+                                path: fc
+                                    .args
+                                    .get("path")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                            }
+                        } else {
+                            ToolCallPayload::Unknown {
+                                name: fc.name,
+                                raw_args: serde_json::to_string(&fc.args).unwrap_or_default(),
+                            }
+                        };
+                        events.push(Ok(BrainEvent::ToolCall(ToolCall {
                             id: fc.id.unwrap_or_default(),
-                            args: serde_json::to_value(fc.args).unwrap_or_default(),
-                        }));
+                            payload,
+                        })));
                     }
                     _ => {}
                 }
@@ -152,6 +203,54 @@ impl BrainEngine for GeminiEngine {
                 interaction_id: response.id,
             }));
             Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+}
+
+fn convert_part(part: &MessagePart) -> Option<InteractionPart> {
+    match part {
+        MessagePart::Text { text } => Some(InteractionPart::Text { text: text.clone() }),
+        MessagePart::Thought { signature, summary } => Some(InteractionPart::Thought {
+            signature: signature.clone(),
+            summary: summary.clone(),
+        }),
+        MessagePart::ToolCall(tc) => {
+            let (name, args) = match &tc.payload {
+                ToolCallPayload::Ls { path } => {
+                    let mut obj = serde_json::Map::new();
+                    if let Some(p) = path {
+                        obj.insert("path".to_string(), serde_json::Value::String(p.clone()));
+                    }
+                    ("ls".to_string(), serde_json::Value::Object(obj))
+                }
+                ToolCallPayload::Unknown { name, raw_args } => {
+                    let parsed = serde_json::from_str(raw_args).unwrap_or(serde_json::Value::Null);
+                    (name.clone(), parsed)
+                }
+            };
+            Some(InteractionPart::FunctionCall(FunctionCall {
+                id: Some(tc.id.clone()),
+                name,
+                args,
+                thought_signature: None,
+            }))
+        }
+        MessagePart::ToolResponse(tr) => {
+            let (name, response) = match &tr.payload {
+                ToolResponsePayload::Ls { entries } => match entries {
+                    Ok(files) => ("ls".to_string(), serde_json::json!({ "entries": files })),
+                    Err(err) => ("ls".to_string(), serde_json::json!({ "error": err })),
+                },
+                ToolResponsePayload::Unknown { result } => (
+                    "unknown".to_string(),
+                    serde_json::json!({ "result": result }),
+                ),
+            };
+            Some(InteractionPart::FunctionResponse(FunctionResponse {
+                id: Some(tr.id.clone()),
+                name,
+                response,
+            }))
         }
     }
 }

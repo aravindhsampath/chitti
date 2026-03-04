@@ -1,11 +1,76 @@
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UserEvent {
     Input(String),
     ToggleMemory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MessageRole {
+    User,
+    Model,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "args")]
+pub enum ToolCallPayload {
+    Ls { path: Option<String> },
+    Unknown { name: String, raw_args: String },
+}
+
+impl std::fmt::Display for ToolCallPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolCallPayload::Ls { path } => write!(f, "ls path={:?}", path),
+            ToolCallPayload::Unknown { name, raw_args } => write!(f, "{} args={}", name, raw_args),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "result")]
+pub enum ToolResponsePayload {
+    Ls {
+        entries: Result<Vec<String>, String>,
+    },
+    Unknown {
+        result: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub payload: ToolCallPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResponse {
+    pub id: String,
+    pub payload: ToolResponsePayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MessagePart {
+    Text { text: String },
+    Thought { signature: String, summary: String },
+    ToolCall(ToolCall),
+    ToolResponse(ToolResponse),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationTurn {
+    pub role: MessageRole,
+    pub parts: Vec<MessagePart>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConversationInput {
+    Text(String),
+    Parts(Vec<MessagePart>),
+    Turns(Vec<ConversationTurn>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,8 +79,7 @@ pub enum SystemEvent {
     Thought(String, SessionState),
     Info(String, SessionState),
     ToolCall {
-        name: String,
-        args: Value,
+        payload: ToolCallPayload,
         state: SessionState,
     },
     Error(String, SessionState),
@@ -44,22 +108,14 @@ pub enum BrainEvent {
     TextDelta(String),
     ThoughtDelta(String),
     ThoughtSignature(String),
-    ToolCall {
-        name: String,
-        id: String,
-        args: Value,
-    },
-    Complete {
-        interaction_id: Option<String>,
-    },
+    ToolCall(ToolCall),
+    Complete { interaction_id: Option<String> },
     Error(String),
 }
 
-use crate::brains::gemini::types::InteractionInput;
-
 #[derive(Debug, Clone)]
 pub struct TurnContext {
-    pub input: InteractionInput,
+    pub input: ConversationInput,
     pub previous_interaction_id: Option<String>,
     pub streaming: bool,
     pub thinking_level: String,
@@ -70,7 +126,6 @@ pub struct TurnContext {
 #[allow(dead_code)]
 pub struct ToolResult {
     pub call_id: String,
-    pub name: String,
-    pub result: Value,
+    pub payload: ToolResponsePayload,
     pub is_error: bool,
 }

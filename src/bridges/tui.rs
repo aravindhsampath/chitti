@@ -403,11 +403,11 @@ impl CommBridge for TuiBridge {
                     state.messages.push(ChatMessage::Thought(text));
                 }
             }
-            SystemEvent::ToolCall { name, args, .. } => {
+            SystemEvent::ToolCall { payload, .. } => {
                 state.is_thinking = false;
                 state
                     .messages
-                    .push(ChatMessage::Tool(format!("Calling {name} with {args}")));
+                    .push(ChatMessage::Tool(format!("Calling tool: {}", payload)));
             }
             SystemEvent::Error(err, _) => {
                 state.is_thinking = false;

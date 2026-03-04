@@ -1,10 +1,9 @@
-use crate::brains::gemini::types::{
-    FunctionCall, FunctionResponse, InteractionContent, InteractionInput, InteractionPart,
-    InteractionTurn, Role,
-};
 use crate::brains::BrainEngine;
 use crate::bridges::CommBridge;
-use crate::conductor::events::{BrainEvent, SessionState, SystemEvent, TurnContext, UserEvent};
+use crate::conductor::events::{
+    BrainEvent, ConversationInput, ConversationTurn, MessagePart, MessageRole, SessionState,
+    SystemEvent, ToolCallPayload, ToolResponse, ToolResponsePayload, TurnContext, UserEvent,
+};
 use anyhow::Result;
 use futures_util::StreamExt;
 use std::collections::VecDeque;
@@ -24,7 +23,7 @@ pub struct Conductor {
     streaming: bool,
     thinking_level: String,
     memory_enabled: bool,
-    turns: Vec<InteractionTurn>,
+    turns: Vec<ConversationTurn>,
     pwd: String,
     git_branch: String,
     dev_mode: bool,
@@ -182,28 +181,29 @@ impl Conductor {
         };
 
         let mut current_turn_history = Vec::new();
-        current_turn_history.push(InteractionTurn {
-            role: Role::User,
-            content: InteractionContent::from(initial_prompt.clone()),
+        current_turn_history.push(ConversationTurn {
+            role: MessageRole::User,
+            parts: vec![MessagePart::Text {
+                text: initial_prompt.clone(),
+            }],
         });
 
-        let mut next_input = InteractionInput::Text(initial_prompt);
-
+        let mut next_input = ConversationInput::Text(initial_prompt);
         loop {
             while let Some(steer) = self.pending_steering.pop_front() {
                 match &mut next_input {
-                    InteractionInput::Text(t) => {
+                    ConversationInput::Text(t) => {
                         *t = format!("{}\n{}", t, steer);
                     }
-                    InteractionInput::Parts(p) => {
-                        p.push(InteractionPart::Text {
+                    ConversationInput::Parts(p) => {
+                        p.push(MessagePart::Text {
                             text: steer.clone(),
                         });
                     }
-                    InteractionInput::Turns(turns) => {
+                    ConversationInput::Turns(turns) => {
                         if let Some(last_turn) = turns.last_mut() {
-                            if last_turn.role == Role::User {
-                                last_turn.content.0.push(InteractionPart::Text {
+                            if last_turn.role == MessageRole::User {
+                                last_turn.parts.push(MessagePart::Text {
                                     text: steer.clone(),
                                 });
                             }
@@ -211,11 +211,8 @@ impl Conductor {
                     }
                 }
                 if let Some(last_turn) = current_turn_history.last_mut() {
-                    if last_turn.role == Role::User {
-                        last_turn
-                            .content
-                            .0
-                            .push(InteractionPart::Text { text: steer });
+                    if last_turn.role == MessageRole::User {
+                        last_turn.parts.push(MessagePart::Text { text: steer });
                     }
                 }
             }
@@ -224,7 +221,7 @@ impl Conductor {
                 input: if self.memory_enabled {
                     next_input.clone()
                 } else {
-                    InteractionInput::Turns(current_turn_history.clone())
+                    ConversationInput::Turns(current_turn_history.clone())
                 },
                 previous_interaction_id: active_interaction_id.clone(),
                 streaming: self.streaming,
@@ -243,7 +240,7 @@ impl Conductor {
                         self.bridge
                             .send(SystemEvent::Text(text.clone(), self.get_state_snapshot()))
                             .await?;
-                        model_response_parts.push(InteractionPart::Text { text });
+                        model_response_parts.push(MessagePart::Text { text });
                     }
                     BrainEvent::ThoughtDelta(thought) => {
                         self.bridge
@@ -251,28 +248,21 @@ impl Conductor {
                             .await?;
                     }
                     BrainEvent::ThoughtSignature(sig) => {
-                        model_response_parts.push(InteractionPart::Thought {
+                        model_response_parts.push(MessagePart::Thought {
                             signature: sig,
                             summary: String::new(),
                         });
                     }
-                    BrainEvent::ToolCall { name, id, args } => {
+                    BrainEvent::ToolCall(tool_call) => {
                         self.bridge
                             .send(SystemEvent::ToolCall {
-                                name: name.clone(),
-                                args: args.clone(),
+                                payload: tool_call.payload.clone(),
                                 state: self.get_state_snapshot(),
                             })
                             .await?;
 
-                        model_response_parts.push(InteractionPart::FunctionCall(FunctionCall {
-                            id: Some(id.clone()),
-                            name: name.clone(),
-                            args: args.clone(),
-                            thought_signature: None,
-                        }));
-
-                        tool_calls.push((name, id, args));
+                        tool_calls.push(tool_call.clone());
+                        model_response_parts.push(MessagePart::ToolCall(tool_call));
                     }
                     BrainEvent::Complete { interaction_id } => {
                         if let Some(id) = interaction_id {
@@ -291,9 +281,9 @@ impl Conductor {
             }
 
             if !model_response_parts.is_empty() {
-                current_turn_history.push(InteractionTurn {
-                    role: Role::Model,
-                    content: InteractionContent::from(model_response_parts),
+                current_turn_history.push(ConversationTurn {
+                    role: MessageRole::Model,
+                    parts: model_response_parts,
                 });
             }
 
@@ -305,8 +295,8 @@ impl Conductor {
             }
 
             let mut results_parts = Vec::new();
-            for (name, id, args) in tool_calls {
-                let description = format!("Execute tool '{}' with args: {}", name, args);
+            for tool_call in tool_calls {
+                let description = format!("Execute tool {}", tool_call.payload);
                 self.bridge
                     .send(SystemEvent::RequestApproval {
                         description,
@@ -338,49 +328,53 @@ impl Conductor {
                     }
                 }
 
-                let result = if approved {
-                    let res = if name == "ls" {
-                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                        match std::fs::read_dir(path) {
-                            Ok(entries) => {
-                                let mut files = Vec::new();
-                                for entry in entries.filter_map(Result::ok) {
-                                    files.push(entry.file_name().to_string_lossy().to_string());
+                let result_payload = if approved {
+                    match &tool_call.payload {
+                        ToolCallPayload::Ls { path } => {
+                            let p = path.as_deref().unwrap_or(".");
+                            match std::fs::read_dir(p) {
+                                Ok(entries) => {
+                                    let mut files = Vec::new();
+                                    for entry in entries.filter_map(Result::ok) {
+                                        files.push(entry.file_name().to_string_lossy().to_string());
+                                    }
+                                    ToolResponsePayload::Ls { entries: Ok(files) }
                                 }
-                                serde_json::json!({ "entries": files })
+                                Err(e) => ToolResponsePayload::Ls {
+                                    entries: Err(e.to_string()),
+                                },
                             }
-                            Err(e) => serde_json::json!({ "error": e.to_string() }),
                         }
-                    } else {
-                        serde_json::json!({ "error": format!("Tool {} not implemented", name) })
-                    };
-                    if self.dev_mode {
-                        self.bridge
-                            .send(SystemEvent::Debug(
-                                format!("Tool Result: {:#?}", res),
-                                self.get_state_snapshot(),
-                            ))
-                            .await?;
+                        ToolCallPayload::Unknown { name, .. } => ToolResponsePayload::Unknown {
+                            result: format!("Tool {} not implemented", name),
+                        },
                     }
-                    res
                 } else {
-                    serde_json::json!({ "error": "User rejected tool execution." })
+                    ToolResponsePayload::Unknown {
+                        result: "User rejected tool execution.".to_string(),
+                    }
                 };
 
-                results_parts.push(InteractionPart::FunctionResponse(FunctionResponse {
-                    id: Some(id),
-                    name,
-                    response: result,
+                if self.dev_mode {
+                    self.bridge
+                        .send(SystemEvent::Debug(
+                            format!("Tool Result: {:#?}", result_payload),
+                            self.get_state_snapshot(),
+                        ))
+                        .await?;
+                }
+
+                results_parts.push(MessagePart::ToolResponse(ToolResponse {
+                    id: tool_call.id,
+                    payload: result_payload,
                 }));
             }
-
-            current_turn_history.push(InteractionTurn {
-                role: Role::User,
-                content: InteractionContent::from(results_parts.clone()),
+            current_turn_history.push(ConversationTurn {
+                role: MessageRole::User,
+                parts: results_parts.clone(),
             });
-            next_input = InteractionInput::Parts(results_parts);
+            next_input = ConversationInput::Parts(results_parts);
         }
-
         if self.memory_enabled {
             self.turns.extend(current_turn_history);
         }
@@ -392,7 +386,9 @@ impl Conductor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conductor::events::{BrainEvent, SystemEvent, TurnContext, UserEvent};
+    use crate::conductor::events::{
+        BrainEvent, SystemEvent, ToolCall, ToolCallPayload, TurnContext, UserEvent,
+    };
     use async_trait::async_trait;
     use futures_util::stream;
     use std::sync::Mutex;
@@ -459,9 +455,9 @@ mod tests {
         {
             let history = calls.lock().unwrap();
             assert_eq!(history.len(), 2);
-            if let InteractionInput::Turns(turns) = &history[1].input {
+            if let ConversationInput::Turns(turns) = &history[1].input {
                 assert_eq!(turns.len(), 1);
-                if let InteractionPart::Text { text } = &turns[0].content.0[0] {
+                if let MessagePart::Text { text } = &turns[0].parts[0] {
                     assert_eq!(text, "What is my name?");
                 } else {
                     panic!("Expected text");
@@ -480,7 +476,7 @@ mod tests {
             let history = calls.lock().unwrap();
             assert_eq!(history.len(), 3);
             assert_eq!(conductor.turns.len(), 4);
-            if let InteractionInput::Text(t) = &history[2].input {
+            if let ConversationInput::Text(t) = &history[2].input {
                 assert_eq!(t, "Still here?");
             } else {
                 panic!("Expected Text input");
@@ -503,11 +499,13 @@ mod tests {
             self.calls.lock().unwrap().push(context);
             if self.calls.lock().unwrap().len() == 1 {
                 Ok(Box::pin(stream::iter(vec![
-                    Ok(BrainEvent::ToolCall {
-                        name: "test_tool".to_string(),
+                    Ok(BrainEvent::ToolCall(ToolCall {
                         id: "call_1".to_string(),
-                        args: serde_json::json!({}),
-                    }),
+                        payload: ToolCallPayload::Unknown {
+                            name: "test_tool".to_string(),
+                            raw_args: "{}".to_string(),
+                        },
+                    })),
                     Ok(BrainEvent::Complete {
                         interaction_id: Some("id_1".to_string()),
                     }),
@@ -556,17 +554,17 @@ mod tests {
         let history = calls.lock().unwrap();
         assert_eq!(history.len(), 2);
 
-        if let InteractionInput::Turns(t) = &history[0].input {
+        if let ConversationInput::Turns(t) = &history[0].input {
             assert_eq!(turns_text(t), vec!["use tool"]);
         } else {
             panic!()
         }
 
-        if let InteractionInput::Turns(t) = &history[1].input {
+        if let ConversationInput::Turns(t) = &history[1].input {
             assert_eq!(t.len(), 3);
-            assert_eq!(t[0].role, Role::User);
-            assert_eq!(t[1].role, Role::Model);
-            assert_eq!(t[2].role, Role::User);
+            assert_eq!(t[0].role, MessageRole::User);
+            assert_eq!(t[1].role, MessageRole::Model);
+            assert_eq!(t[2].role, MessageRole::User);
         } else {
             panic!()
         }
@@ -574,11 +572,11 @@ mod tests {
         Ok(())
     }
 
-    fn turns_text(turns: &[InteractionTurn]) -> Vec<String> {
+    fn turns_text(turns: &[ConversationTurn]) -> Vec<String> {
         turns
             .iter()
-            .map(|t| match &t.content.0[0] {
-                InteractionPart::Text { text } => text.clone(),
+            .map(|t| match &t.parts[0] {
+                MessagePart::Text { text } => text.clone(),
                 _ => "non-text".to_string(),
             })
             .collect()
@@ -599,9 +597,11 @@ mod tests {
         );
 
         conductor.interaction_id = Some("existing".to_string());
-        conductor.turns.push(InteractionTurn {
-            role: Role::User,
-            content: InteractionContent::from("test".to_string()),
+        conductor.turns.push(ConversationTurn {
+            role: MessageRole::User,
+            parts: vec![MessagePart::Text {
+                text: "test".to_string(),
+            }],
         });
         tx.send(UserEvent::Input("/clear".to_string())).await?;
 
