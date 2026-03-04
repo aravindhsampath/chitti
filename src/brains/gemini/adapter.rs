@@ -60,6 +60,12 @@ impl BrainEngine for GeminiEngine {
                 _ => crate::brains::gemini::types::ThinkingLevel::High,
             });
 
+        if let Some(instruction) = context.system_instruction {
+            builder = builder.system_instruction(
+                crate::brains::gemini::types::InteractionContent::from(instruction),
+            );
+        }
+
         if let Some(id) = context.previous_interaction_id {
             builder = builder.previous_interaction_id(id);
         }

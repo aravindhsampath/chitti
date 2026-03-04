@@ -40,7 +40,14 @@ async fn main() -> Result<()> {
             let (tui, rx) = TuiBridge::new();
             let bridge = Arc::new(tui);
 
-            let mut conductor = Conductor::new(brain, bridge.clone(), rx, config.dev_mode);
+            let mut conductor = Conductor::new(
+                brain,
+                bridge.clone(),
+                rx,
+                config.dev_mode,
+                config.soul_path.clone(),
+                config.memory_path.clone(),
+            );
 
             bridge.send(crate::conductor::events::SystemEvent::Text(
                 "Welcome to Chitti! Type your message or a command (e.g., /stream, /thinking, /exit).\n".to_string(),
@@ -59,7 +66,14 @@ async fn main() -> Result<()> {
             let (web_bridge, rx_user, tx_user) = WebBridge::new();
             let bridge = Arc::new(web_bridge);
 
-            let mut conductor = Conductor::new(brain, bridge.clone(), rx_user, config.dev_mode);
+            let mut conductor = Conductor::new(
+                brain,
+                bridge.clone(),
+                rx_user,
+                config.dev_mode,
+                config.soul_path.clone(),
+                config.memory_path.clone(),
+            );
 
             bridge
                 .send(crate::conductor::events::SystemEvent::Text(

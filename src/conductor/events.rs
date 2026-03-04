@@ -120,6 +120,7 @@ pub struct TurnContext {
     pub streaming: bool,
     pub thinking_level: String,
     pub memory_enabled: bool,
+    pub system_instruction: Option<String>,
 }
 
 #[derive(Debug, Clone)]

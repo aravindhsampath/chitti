@@ -23,6 +23,8 @@ pub struct Conductor {
     streaming: bool,
     thinking_level: String,
     memory_enabled: bool,
+    pub soul_path: std::path::PathBuf,
+    pub memory_path: std::path::PathBuf,
     turns: Vec<ConversationTurn>,
     pwd: String,
     git_branch: String,
@@ -35,6 +37,8 @@ impl Conductor {
         bridge: Arc<dyn CommBridge>,
         events_rx: mpsc::Receiver<UserEvent>,
         dev_mode: bool,
+        soul_path: std::path::PathBuf,
+        memory_path: std::path::PathBuf,
     ) -> Self {
         let mut conductor = Self {
             brain,
@@ -45,6 +49,8 @@ impl Conductor {
             streaming: true,
             thinking_level: "high".to_string(),
             memory_enabled: true,
+            soul_path,
+            memory_path,
             turns: Vec::new(),
             pwd: String::new(),
             git_branch: String::new(),
@@ -217,6 +223,21 @@ impl Conductor {
                 }
             }
 
+            let mut sys_instr = None;
+            if self.memory_enabled {
+                let mut content = String::new();
+                if let Ok(soul) = std::fs::read_to_string(&self.soul_path) {
+                    content.push_str(&soul);
+                    content.push_str("\n\n");
+                }
+                if let Ok(memory) = std::fs::read_to_string(&self.memory_path) {
+                    content.push_str(&memory);
+                }
+                if !content.trim().is_empty() {
+                    sys_instr = Some(content);
+                }
+            }
+
             let context = TurnContext {
                 input: if self.memory_enabled {
                     next_input.clone()
@@ -227,6 +248,7 @@ impl Conductor {
                 streaming: self.streaming,
                 thinking_level: self.thinking_level.clone(),
                 memory_enabled: self.memory_enabled,
+                system_instruction: sys_instr,
             };
 
             if self.dev_mode {
@@ -459,6 +481,8 @@ mod tests {
             }),
             rx,
             false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
         );
 
         conductor
@@ -553,6 +577,8 @@ mod tests {
             }),
             rx,
             false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
         );
 
         conductor.memory_enabled = false;
@@ -613,6 +639,8 @@ mod tests {
             }),
             rx,
             false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
         );
 
         conductor.interaction_id = Some("existing".to_string());
@@ -652,6 +680,8 @@ mod tests {
             }),
             rx,
             false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
         );
 
         let tx_clone = tx.clone();
@@ -680,7 +710,14 @@ mod tests {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let bridge = Arc::new(TestBridge { sent: sent.clone() });
         let (_tx, rx) = mpsc::channel(10);
-        let mut conductor = Conductor::new(brain, bridge, rx, false);
+        let mut conductor = Conductor::new(
+            brain,
+            bridge,
+            rx,
+            false,
+            std::path::PathBuf::from("SOUL.md"),
+            std::path::PathBuf::from("MEMORY.md"),
+        );
         conductor.streaming = false;
 
         conductor.handle_conversation("hello".to_string()).await?;

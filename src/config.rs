@@ -13,6 +13,8 @@ pub struct Config {
     pub gemini_model: String,
     pub dev_mode: bool,
     pub ui_mode: UiMode,
+    pub soul_path: std::path::PathBuf,
+    pub memory_path: std::path::PathBuf,
 }
 impl Config {
     pub fn from_env() -> Result<Self> {
@@ -32,11 +34,21 @@ impl Config {
             })
             .unwrap_or(UiMode::Tui);
 
+        let soul_path = env::var("CHITTI_SOUL_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("SOUL.md"));
+
+        let memory_path = env::var("CHITTI_MEMORY_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("MEMORY.md"));
+
         Ok(Self {
             gemini_api_key: api_key,
             gemini_model: model,
             dev_mode,
             ui_mode,
+            soul_path,
+            memory_path,
         })
     }
 }
