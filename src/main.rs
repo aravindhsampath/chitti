@@ -42,6 +42,12 @@ async fn main() -> Result<()> {
     let client = brains::gemini::Client::new(config.gemini_api_key, config.gemini_model.clone());
     let brain = Box::new(GeminiEngine::new(client));
 
+    let (memory_tx, memory_rx) = tokio::sync::mpsc::channel(100);
+    let manager = crate::memory::manager::MemoryManager::new(db.clone(), memory_rx);
+    tokio::spawn(async move {
+        manager.run().await;
+    });
+
     match config.ui_mode {
         UiMode::Tui => {
             let (tui, rx) = TuiBridge::new();
@@ -55,6 +61,7 @@ async fn main() -> Result<()> {
                 config.soul_path.clone(),
                 config.memory_path.clone(),
                 db.clone(),
+                memory_tx.clone(),
             );
 
             bridge.send(crate::conductor::events::SystemEvent::Text(
@@ -82,6 +89,7 @@ async fn main() -> Result<()> {
                 config.soul_path.clone(),
                 config.memory_path.clone(),
                 db.clone(),
+                memory_tx.clone(),
             );
 
             bridge

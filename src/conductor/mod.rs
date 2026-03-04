@@ -26,6 +26,7 @@ pub struct Conductor {
     pub soul_path: std::path::PathBuf,
     pub memory_path: std::path::PathBuf,
     pub db: Arc<crate::memory::db::Db>,
+    pub memory_tx: tokio::sync::mpsc::Sender<crate::memory::manager::TriggerMemoryCheck>,
     turns: Vec<ConversationTurn>,
     pwd: String,
     git_branch: String,
@@ -34,6 +35,7 @@ pub struct Conductor {
 }
 
 impl Conductor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         brain: Box<dyn BrainEngine>,
         bridge: Arc<dyn CommBridge>,
@@ -42,6 +44,7 @@ impl Conductor {
         soul_path: std::path::PathBuf,
         memory_path: std::path::PathBuf,
         db: Arc<crate::memory::db::Db>,
+        memory_tx: tokio::sync::mpsc::Sender<crate::memory::manager::TriggerMemoryCheck>,
     ) -> Self {
         let mut conductor = Self {
             brain,
@@ -55,6 +58,7 @@ impl Conductor {
             soul_path,
             memory_path,
             db,
+            memory_tx,
             turns: Vec::new(),
             pwd: String::new(),
             git_branch: String::new(),
@@ -220,6 +224,12 @@ impl Conductor {
             let _ = self
                 .db
                 .insert_audit_log("default", &self.active_topic_id, "user", &json, "[]")
+                .await;
+            let _ = self
+                .memory_tx
+                .send(crate::memory::manager::TriggerMemoryCheck {
+                    topic_id: self.active_topic_id.clone(),
+                })
                 .await;
         }
 
@@ -406,6 +416,12 @@ impl Conductor {
                         .db
                         .insert_audit_log("default", &self.active_topic_id, "model", &json, "[]")
                         .await;
+                    let _ = self
+                        .memory_tx
+                        .send(crate::memory::manager::TriggerMemoryCheck {
+                            topic_id: self.active_topic_id.clone(),
+                        })
+                        .await;
                 }
                 current_turn_history.push(model_turn);
             }
@@ -501,6 +517,12 @@ impl Conductor {
                     .db
                     .insert_audit_log("default", &self.active_topic_id, "tool", &json, "[]")
                     .await;
+                let _ = self
+                    .memory_tx
+                    .send(crate::memory::manager::TriggerMemoryCheck {
+                        topic_id: self.active_topic_id.clone(),
+                    })
+                    .await;
             }
             current_turn_history.push(tool_turn);
             next_input = ConversationInput::Parts(results_parts);
@@ -573,6 +595,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
+            mpsc::channel(10).0,
         );
 
         conductor
@@ -670,6 +693,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
+            mpsc::channel(10).0,
         );
 
         conductor.memory_enabled = false;
@@ -733,6 +757,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
+            mpsc::channel(10).0,
         );
 
         conductor.interaction_id = Some("existing".to_string());
@@ -775,6 +800,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
+            mpsc::channel(10).0,
         );
 
         let tx_clone = tx.clone();
@@ -811,6 +837,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             Arc::new(crate::memory::db::Db::open_in_memory().await.unwrap()),
+            mpsc::channel(10).0,
         );
         conductor.streaming = false;
 
@@ -845,6 +872,7 @@ mod tests {
             std::path::PathBuf::from("SOUL.md"),
             std::path::PathBuf::from("MEMORY.md"),
             db,
+            mpsc::channel(10).0,
         );
 
         conductor.interaction_id = Some("existing".to_string());
