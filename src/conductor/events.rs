@@ -67,6 +67,7 @@ pub enum MessagePart {
     Thought { signature: String, summary: String },
     ToolCall(ToolCall),
     ToolResponse(ToolResponse),
+    Image { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

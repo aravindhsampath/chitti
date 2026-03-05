@@ -312,6 +312,36 @@ fn convert_part(part: &MessagePart) -> Option<InteractionPart> {
             signature: signature.clone(),
             summary: summary.clone(),
         }),
+        MessagePart::Image { path } => {
+            // Read the image file and convert to base64 inline data
+            // For now, we will handle this inside the Conductor when reading files, but here we can just create a MediaPart
+            let mime_type = match std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+            {
+                Some("png") => "image/png",
+                Some("jpeg") | Some("jpg") => "image/jpeg",
+                Some("webp") => "image/webp",
+                _ => "image/jpeg",
+            }
+            .to_string();
+
+            if let Ok(data) = std::fs::read(path) {
+                let base64_data =
+                    std::sync::Arc::new(base64::engine::general_purpose::STANDARD.clone());
+                use base64::Engine;
+                let b64 = base64_data.encode(data);
+                Some(InteractionPart::Image(
+                    crate::brains::gemini::types::MediaPart {
+                        uri: None,
+                        data: Some(b64),
+                        mime_type,
+                    },
+                ))
+            } else {
+                None
+            }
+        }
         MessagePart::ToolCall(tc) => {
             let (name, args) = match &tc.payload {
                 ToolCallPayload::Ls { path } => {
