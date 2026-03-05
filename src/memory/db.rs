@@ -138,6 +138,75 @@ impl Db {
             .await?;
         Ok(logs)
     }
+    pub async fn count_unsummarized_logs(
+        &self,
+        topic_id: &str,
+        last_summarized_log_id: i64,
+    ) -> Result<i64> {
+        let topic_id = topic_id.to_owned();
+        let count = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare("SELECT count(*) FROM audit_logs WHERE topic_id = ?1 AND id > ?2")?;
+                let count: i64 = stmt
+                    .query_row(rusqlite::params![topic_id, last_summarized_log_id], |row| {
+                        row.get(0)
+                    })?;
+                Ok(count)
+            })
+            .await?;
+        Ok(count)
+    }
+
+    pub async fn fetch_oldest_unsummarized_logs(
+        &self,
+        topic_id: &str,
+        last_summarized_log_id: i64,
+        limit: i64,
+    ) -> Result<Vec<AuditLog>> {
+        let topic_id = topic_id.to_owned();
+        let logs = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare("SELECT id, role, content FROM audit_logs WHERE topic_id = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3")?;
+                let rows = stmt.query_map(rusqlite::params![topic_id, last_summarized_log_id, limit], |row| {
+                    Ok(AuditLog {
+                        id: row.get(0)?,
+                        role: row.get(1)?,
+                        content: row.get(2)?,
+                    })
+                })?;
+                let mut result = Vec::new();
+                for row in rows {
+                    result.push(row?);
+                }
+                Ok(result)
+            })
+            .await?;
+        Ok(logs)
+    }
+
+    pub async fn update_topic_summary(
+        &self,
+        topic_id: &str,
+        new_summary: &str,
+        new_last_id: i64,
+    ) -> Result<()> {
+        let topic_id = topic_id.to_owned();
+        let new_summary = new_summary.to_owned();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE topics SET topic_summary = ?1, last_summarized_log_id = ?2 WHERE id = ?3",
+                    rusqlite::params![new_summary, new_last_id, topic_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
     fn init_schema(conn: &mut Connection) -> rusqlite::Result<()> {
         let tx = conn.transaction()?;
 
