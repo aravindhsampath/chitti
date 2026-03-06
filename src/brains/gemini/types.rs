@@ -220,7 +220,7 @@ pub struct InteractionRequest {
     pub agent: Option<String>,
     pub input: InteractionInput,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<String>,
+    pub system_instruction: Option<InteractionContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_interaction_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

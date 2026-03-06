@@ -56,7 +56,7 @@ impl<'a> InteractionRequestBuilder<'a> {
     }
 
     #[allow(dead_code)]
-    pub fn system_instruction(mut self, instruction: String) -> Self {
+    pub fn system_instruction(mut self, instruction: InteractionContent) -> Self {
         self.request.system_instruction = Some(instruction);
         self
     }

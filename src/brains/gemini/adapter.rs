@@ -69,56 +69,69 @@ impl BrainEngine for GeminiEngine {
             });
 
         if let Some(instruction) = context.system_instruction {
-            let mut hasher = DefaultHasher::new();
-            instruction.hash(&mut hasher);
-            let current_hash = hasher.finish();
+            if instruction.len() < 4000 {
+                // Gemini requires a minimum of 1024 tokens to cache.
+                // 4000 chars is a safe heuristic for < 1024 tokens.
+                builder = builder.system_instruction(
+                    crate::brains::gemini::types::InteractionContent::from(instruction),
+                );
+            } else {
+                let mut hasher = DefaultHasher::new();
+                instruction.hash(&mut hasher);
+                let current_hash = hasher.finish();
 
-            let mut current_cache = None;
-            {
-                let cache_lock = self.active_cache.read().await;
-                if let Some((hash, name)) = cache_lock.as_ref() {
-                    if *hash == current_hash {
-                        current_cache = Some(name.clone());
-                    }
-                }
-            }
-
-            if current_cache.is_none() {
-                let content = crate::brains::gemini::types::Content {
-                    role: None,
-                    parts: vec![crate::brains::gemini::types::Part {
-                        text: Some(instruction.clone()),
-                        ..Default::default()
-                    }],
-                };
-                let new_cache = crate::brains::gemini::types::CachedContent {
-                    name: None,
-                    model: format!("models/{}", self.client.model),
-                    contents: None,
-                    system_instruction: Some(content),
-                    tools: None,
-                    ttl: Some("3600s".to_string()),
-                    expire_time: None,
-                };
-                match self.client.create_cached_content(new_cache).await {
-                    Ok(cached) => {
-                        if let Some(name) = cached.name {
-                            tracing::info!("Created new context cache: {}", name);
-                            let mut cache_lock = self.active_cache.write().await;
-                            *cache_lock = Some((current_hash, name.clone()));
-                            current_cache = Some(name);
+                let mut current_cache = None;
+                {
+                    let cache_lock = self.active_cache.read().await;
+                    if let Some((hash, name)) = cache_lock.as_ref() {
+                        if *hash == current_hash {
+                            current_cache = Some(name.clone());
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to create cache: {}. Falling back to inline.", e);
+                }
+
+                if current_cache.is_none() {
+                    let content = crate::brains::gemini::types::Content {
+                        role: None,
+                        parts: vec![crate::brains::gemini::types::Part {
+                            text: Some(instruction.clone()),
+                            ..Default::default()
+                        }],
+                    };
+                    let new_cache = crate::brains::gemini::types::CachedContent {
+                        name: None,
+                        model: format!("models/{}", self.client.model),
+                        contents: None,
+                        system_instruction: Some(content),
+                        tools: None,
+                        ttl: Some("3600s".to_string()),
+                        expire_time: None,
+                    };
+                    match self.client.create_cached_content(new_cache).await {
+                        Ok(cached) => {
+                            if let Some(name) = cached.name {
+                                tracing::info!("Created new context cache: {}", name);
+                                let mut cache_lock = self.active_cache.write().await;
+                                *cache_lock = Some((current_hash, name.clone()));
+                                current_cache = Some(name);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create cache: {}. Falling back to inline.",
+                                e
+                            );
+                        }
                     }
                 }
-            }
 
-            if let Some(cache_name) = current_cache {
-                builder = builder.cached_content(cache_name);
-            } else {
-                builder = builder.system_instruction(instruction);
+                if let Some(cache_name) = current_cache {
+                    builder = builder.cached_content(cache_name);
+                } else {
+                    builder = builder.system_instruction(
+                        crate::brains::gemini::types::InteractionContent::from(instruction),
+                    );
+                }
             }
         }
 
@@ -438,13 +451,14 @@ mod tests {
         let client = Client::new("key".into(), "model".into()).with_base_url(server.url());
         let engine = GeminiEngine::new(client);
 
+        let long_instruction = "test instruction".repeat(1000);
         let mut context = TurnContext {
             input: ConversationInput::Text("hi".into()),
             previous_interaction_id: None,
             streaming: false,
             thinking_level: "low".into(),
             memory_enabled: true,
-            system_instruction: Some("test instruction".into()),
+            system_instruction: Some(long_instruction),
         };
 
         // First turn should create cache
@@ -466,7 +480,8 @@ mod tests {
             .create_async()
             .await;
 
-        context.system_instruction = Some("new test instruction".into());
+        let new_long_instruction = "new test instruction".repeat(1000);
+        context.system_instruction = Some(new_long_instruction);
         let _ = engine.process_turn(context.clone()).await.unwrap();
         mock_cache_2.assert_async().await;
     }
