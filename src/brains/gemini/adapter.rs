@@ -118,9 +118,7 @@ impl BrainEngine for GeminiEngine {
             if let Some(cache_name) = current_cache {
                 builder = builder.cached_content(cache_name);
             } else {
-                builder = builder.system_instruction(
-                    crate::brains::gemini::types::InteractionContent::from(instruction),
-                );
+                builder = builder.system_instruction(instruction);
             }
         }
 
